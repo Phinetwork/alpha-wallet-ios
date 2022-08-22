@@ -8,12 +8,8 @@ extension WalletConnectCoordinator {
 
     static func fake() -> WalletConnectCoordinator {
         let keystore = FakeEtherKeystore()
-        var sessions = ServerDictionary<WalletSession>()
-        let session = WalletSession.make()
-        sessions[session.server] = session
-        let sessionsSubject = CurrentValueSubject<ServerDictionary<WalletSession>, Never>(sessions)
-
-        return WalletConnectCoordinator(keystore: keystore, navigationController: .init(), analyticsCoordinator: FakeAnalyticsService(), config: .make(), sessionsSubject: sessionsSubject)
+        let sessionProvider: SessionsProvider = .make(wallet: .make(), servers: [.main])
+        return WalletConnectCoordinator(keystore: keystore, navigationController: .init(), analytics: FakeAnalyticsService(), domainResolutionService: FakeDomainResolutionService(), config: .make(), sessionProvider: sessionProvider, assetDefinitionStore: AssetDefinitionStore())
     }
 }
 
@@ -33,25 +29,28 @@ class ConfigTests: XCTestCase {
 
         let config: Config = .make()
         Config.setLocale(AppLocale.english)
-        let coinTickersFetcher = FakeCoinTickersFetcher()
         let tokenActionsService = FakeSwapTokenService()
-        let tokensDataStore = FakeTokensDataStore()
-        
+        let dep1 = WalletDataProcessingPipeline.make(wallet: .make(), server: .main)
+
         let coordinator_1 = TokensCoordinator(
             navigationController: FakeNavigationController(),
             sessions: sessions,
-            keystore: FakeKeystore(),
+            keystore: FakeEtherKeystore(),
             config: config,
-            tokensDataStore: tokensDataStore,
             assetDefinitionStore: AssetDefinitionStore(),
-            eventsDataStore: FakeEventsDataStore(),
-            promptBackupCoordinator: PromptBackupCoordinator(keystore: FakeKeystore(), wallet: .make(), config: config, analyticsCoordinator: FakeAnalyticsService()),
-            analyticsCoordinator: FakeAnalyticsService(),
+            promptBackupCoordinator: PromptBackupCoordinator(keystore: FakeEtherKeystore(), wallet: .make(), config: config, analytics: FakeAnalyticsService()),
+            analytics: FakeAnalyticsService(),
+            openSea: OpenSea(analytics: FakeAnalyticsService(), queue: .global()),
             tokenActionsService: tokenActionsService,
             walletConnectCoordinator: .fake(),
-            coinTickersFetcher: coinTickersFetcher,
+            coinTickersFetcher: CoinGeckoTickersFetcher.make(),
             activitiesService: FakeActivitiesService(),
-            walletBalanceService: FakeMultiWalletBalanceService()
+            walletBalanceService: FakeMultiWalletBalanceService(),
+            tokenCollection: dep1.pipeline,
+            importToken: dep1.importToken,
+            blockiesGenerator: .make(),
+            domainResolutionService: FakeDomainResolutionService(),
+            tokensFilter: .make()
         )
 
         coordinator_1.start()
@@ -59,22 +58,27 @@ class ConfigTests: XCTestCase {
         XCTAssertEqual(coordinator_1.tokensViewController.title, "Wallet")
 
         Config.setLocale(AppLocale.simplifiedChinese)
-        
+
+        let dep2 = WalletDataProcessingPipeline.make(wallet: .make(), server: .main)
         let coordinator_2 = TokensCoordinator(
             navigationController: FakeNavigationController(),
             sessions: sessions,
-            keystore: FakeKeystore(),
+            keystore: FakeEtherKeystore(),
             config: config,
-            tokensDataStore: tokensDataStore,
             assetDefinitionStore: AssetDefinitionStore(),
-            eventsDataStore: FakeEventsDataStore(),
-            promptBackupCoordinator: PromptBackupCoordinator(keystore: FakeKeystore(), wallet: .make(), config: config, analyticsCoordinator: FakeAnalyticsService()),
-            analyticsCoordinator: FakeAnalyticsService(),
+            promptBackupCoordinator: PromptBackupCoordinator(keystore: FakeEtherKeystore(), wallet: .make(), config: config, analytics: FakeAnalyticsService()),
+            analytics: FakeAnalyticsService(),
+            openSea: OpenSea(analytics: FakeAnalyticsService(), queue: .global()),
             tokenActionsService: tokenActionsService,
             walletConnectCoordinator: .fake(),
-            coinTickersFetcher: coinTickersFetcher,
+            coinTickersFetcher: CoinGeckoTickersFetcher.make(),
             activitiesService: FakeActivitiesService(),
-            walletBalanceService: FakeMultiWalletBalanceService()
+            walletBalanceService: FakeMultiWalletBalanceService(),
+            tokenCollection: dep2.pipeline,
+            importToken: dep2.importToken,
+            blockiesGenerator: .make(),
+            domainResolutionService: FakeDomainResolutionService(),
+            tokensFilter: .make()
         )
 
         coordinator_2.start()
@@ -83,5 +87,16 @@ class ConfigTests: XCTestCase {
 
         //Must change this back to system, otherwise other tests will break either immediately or the next run
         Config.setLocale(AppLocale.system)
+    }
+
+    func testMakeSureDevelopmentFlagsAreAllFalse() {
+        let mirror = Mirror(reflecting: Config.Development())
+        for child in mirror.children {
+            if let value = child.value as? Bool {
+                XCTAssertFalse(value, "Property: \(String(describing: child.label)) should be `false`")
+            } else {
+                XCTFail("Property: \(String(describing: child.label)) should be `bool`")
+            }
+        }
     }
 }

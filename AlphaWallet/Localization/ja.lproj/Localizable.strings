@@ -414,6 +414,7 @@
 "accounts.delete.error.failedToExportPrivateKey" = "秘密鍵をエクスポートできませんでした";
 "accounts.delete.error.failedToExportSeed" = "Failed to export wallet seed. If you have migrated to a new phone or restored your device, you need to import your wallet again";
 "Chain ID" = "チェーン ID";
+"Chain ID with prefix" = "Chain ID: %i";
 "Endpoint" = "エンドポイント";
 "settings.preferences.button.title" = "起動時にトークンを表示";
 "settings.preferences.title" = "基本設定";
@@ -469,6 +470,7 @@
 "blockchain.arbitrum.rinkeby" = "Arbitrum Rinkeby";
 "blockchain.palm" = "Palm";
 "blockchain.palm.Testnet" = "Palm (Testnet)";
+"blockchain.phi" = "PHI";
 "a.claim.token.failed.notEnoughXDAI.title" = "a.claim.token.failed.notEnoughXDAI.title";
 "photos" = "Browse";
 "light" = "Light";
@@ -597,6 +599,7 @@
 "sendTransaction.error.networkConnectionWasLost" = "The network connection was lost. Please try again";
 "sendTransaction.error.invalidCertificate" = "It seems like there is a problem with the RPC node certificate. Please try again later";
 "sendTransaction.error.requestTimedOut" = "Request has timed out. Please try again";
+"sendTransaction.error.invalidKey" = "Something went wrong when making the request. Please try again later";
 "transactionConfiguration.Type.slow" = "Slow";
 "transactionConfiguration.Type.average" = "Average";
 "transactionConfiguration.Type.fast" = "Fast";
@@ -849,3 +852,9 @@
 "advanced.settings.features.title" = "Features";
 "semifungiblesProjectInfo" = "Project Info";
 "semifungibles.Edcon.description" = "Edcon is a game centered around breedable, collectible, and adorable creatures where digital pandas live in the blockchain! Each panda comes from descendants of 50 giant pandas that have been officially licensed by China Panda Conservation and Research Center.";
+"requester.field.url" = "URL";
+"accept.deepLink.navigationTitle" = "Connect to";
+"accept.deepLink.field.note" = "This will inform them your wallet address is %@";
+"accept.deepLink.field.url.title" = "URL";
+"accept.deepLink.field.note.title" = "Note";
+"accept.walletConnect.field.methods.title" = "Methods";

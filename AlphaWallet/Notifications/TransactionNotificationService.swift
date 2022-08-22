@@ -17,7 +17,6 @@ final class TransactionNotificationSourceService: NotificationSourceService {
     private let formatter = EtherNumberFormatter.short
     private static let maximumNumberOfNotifications = 10
     private let receiveNotificationSubject: PassthroughSubject<LocalNotification, Never> = .init()
-
     var receiveNotification: AnyPublisher<LocalNotification, Never> {
         receiveNotificationSubject.eraseToAnyPublisher()
     }
@@ -32,7 +31,7 @@ final class TransactionNotificationSourceService: NotificationSourceService {
         let predicate = transactionsPredicate(wallet: wallet)
 
         transactionDataStore
-            .transactionsChangesetPublisher(forFilter: .predicate(predicate), servers: config.enabledServers)
+            .transactionsChangeset(forFilter: .predicate(predicate), servers: config.enabledServers)
             .map { changeset -> ServerDictionary<[TransactionInstance]> in
                 switch changeset {
                 case .initial(let transactions):
@@ -101,7 +100,7 @@ final class TransactionNotificationSourceService: NotificationSourceService {
         case .main:
             etherReceivedUsedForBackupPrompt
                 .flatMap { promptBackupCoordinator.showCreateBackupAfterReceiveNativeCryptoCurrencyPrompt(nativeCryptoCurrency: $0) }
-        case .classic, .xDai, .kovan, .ropsten, .rinkeby, .poa, .sokol, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+        case .classic, .xDai, .kovan, .ropsten, .rinkeby, .poa, .sokol, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
             break
         }
     }

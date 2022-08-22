@@ -13,7 +13,7 @@ protocol ActiveWalletSessionViewDelegate: AnyObject {
 
 struct ActiveWalletSessionViewModel {
     let count: Int
-    let backgroundColor: UIColor = R.color.solitude()!
+    let backgroundColor: UIColor = Configuration.Color.Semantic.tableViewSpecialBackground
     let icon: UIImage = R.image.walletConnectIcon()!
 
     var titleAttributedText: NSAttributedString {
@@ -23,7 +23,7 @@ struct ActiveWalletSessionViewModel {
         return .init(string: "WalletConnect", attributes: [
             .paragraphStyle: style,
             .font: Fonts.regular(size: ScreenChecker().isNarrowScreen ? 18 : 20) as Any,
-            .foregroundColor: Colors.black
+            .foregroundColor: Configuration.Color.Semantic.defaultForegroundText
         ])
     }
 
@@ -39,7 +39,7 @@ struct ActiveWalletSessionViewModel {
         return .init(string: title, attributes: [
             .paragraphStyle: style,
             .font: Fonts.regular(size: ScreenChecker().isNarrowScreen ? 14 : 16) as Any,
-            .foregroundColor: R.color.dove() as Any
+            .foregroundColor: Configuration.Color.Semantic.defaultSubtitleText
         ])
     }
 }
@@ -110,9 +110,9 @@ class ActiveWalletSessionView: UITableViewHeaderFooterView {
 
         NSLayoutConstraint.activate([
             iconImageView.heightAnchor.constraint(equalToConstant: 40),
-            iconImageView.widthAnchor.constraint(equalToConstant: 40),
+            iconImageView.widthAnchor.constraint(equalToConstant: 40).set(priority: .defaultHigh),
 
-            stackView.anchorsConstraint(to: background, edgeInsets: .init(top: 16, left: 20, bottom: 16, right: 16)),
+            stackView.anchorsConstraint(to: background, edgeInsets: .init(top: 16, left: 20, bottom: 16, right: 16)).map { $0.set(priority: .defaultHigh) },
             background.anchorsConstraint(to: contentView)
         ])
 

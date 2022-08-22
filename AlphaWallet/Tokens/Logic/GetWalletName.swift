@@ -1,29 +1,25 @@
 // Copyright © 2020 Stormbird PTE. LTD.
 
 import Foundation
-import PromiseKit
+import Combine
 
 //Use the wallet name which the user has set, otherwise fallback to ENS, if available
 class GetWalletName {
-    private let config: Config
-    private let resolver: DomainResolutionServiceType = DomainResolutionService()
+    private let domainResolutionService: DomainResolutionServiceType
 
-    init(config: Config) {
-        self.config = config
+    init(domainResolutionService: DomainResolutionServiceType) {
+        self.domainResolutionService = domainResolutionService
     }
 
-    func getName(forAddress address: AlphaWallet.Address) -> Promise<String> {
-        struct ResolveEnsError: Error {}
-        if let walletName = config.walletNames[address] {
-            return .value(walletName)
+    func assignedNameOrEns(for address: AlphaWallet.Address) -> AnyPublisher<String?, Never> {
+        //TODO: pass ref
+        if let walletName = FileWalletStorage().name(for: address) {
+            return .just(walletName)
         } else {
-            return resolver.resolveEns(address: address).map { result in
-                if let value = result.resolution.value {
-                    return value
-                } else {
-                    throw ResolveEnsError()
-                }
-            }
+            return domainResolutionService.resolveEns(address: address)
+                .map { ens -> EnsName? in return ens }
+                .replaceError(with: nil)
+                .eraseToAnyPublisher()
         }
     }
 }

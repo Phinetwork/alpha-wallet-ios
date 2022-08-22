@@ -7,9 +7,9 @@ class BackupCoordinatorTests: XCTestCase {
     func testStartWithHdWallet() {
         let coordinator = BackupCoordinator(
             navigationController: FakeNavigationController(),
-            keystore: FakeKeystore(assumeAllWalletsType: .hdWallet),
-            account: .make(),
-            analyticsCoordinator: FakeAnalyticsService()
+            keystore: FakeEtherKeystore(wallets: [.make(origin: .hd)]),
+            account: .make(origin: .hd),
+            analytics: FakeAnalyticsService()
         )
         coordinator.start()
 
@@ -19,9 +19,9 @@ class BackupCoordinatorTests: XCTestCase {
     func testStartWithKeystoreWallet() {
         let coordinator = BackupCoordinator(
                 navigationController: FakeNavigationController(),
-                keystore: FakeKeystore(assumeAllWalletsType: .keyStoreWallet),
-                account: .make(),
-                analyticsCoordinator: FakeAnalyticsService()
+                keystore: FakeEtherKeystore(wallets: [.make(origin: .privateKey)]),
+                account: .make(origin: .privateKey),
+                analytics: FakeAnalyticsService()
         )
         coordinator.start()
 

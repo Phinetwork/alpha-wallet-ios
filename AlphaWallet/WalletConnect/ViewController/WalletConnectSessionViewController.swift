@@ -11,6 +11,7 @@ import Combine
 protocol WalletConnectSessionViewControllerDelegate: AnyObject {
     func controller(_ controller: WalletConnectSessionViewController, switchNetworkSelected sender: UIButton)
     func controller(_ controller: WalletConnectSessionViewController, disconnectSelected sender: UIButton)
+    func didClose(in controller: WalletConnectSessionViewController)
 }
 
 class WalletConnectSessionViewController: UIViewController {
@@ -135,7 +136,7 @@ class WalletConnectSessionViewController: UIViewController {
     }
 
     private func reconfigure() {
-        guard let session = provider.session(forIdentifier: viewModel.sessionIdentifier) else {
+        guard let session = provider.session(for: viewModel.topicOrUrl) else {
             //NOTE: actually this case should newer happend
             return configure(viewModel: viewModel)
         }
@@ -169,5 +170,11 @@ class WalletConnectSessionViewController: UIViewController {
 
     @objc private func switchNetworkButtonSelected(_ sender: UIButton) {
         delegate?.controller(self, switchNetworkSelected: sender)
+    }
+}
+
+extension WalletConnectSessionViewController: PopNotifiable {
+    func didPopViewController(animated: Bool) {
+        delegate?.didClose(in: self)
     }
 }

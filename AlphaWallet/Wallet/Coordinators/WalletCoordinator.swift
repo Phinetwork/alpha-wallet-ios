@@ -12,7 +12,8 @@ class WalletCoordinator: Coordinator {
     private let config: Config
     private var keystore: Keystore
     private weak var importWalletViewController: ImportWalletViewController?
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
 
     var navigationController: UINavigationController
     weak var delegate: WalletCoordinatorDelegate?
@@ -20,14 +21,16 @@ class WalletCoordinator: Coordinator {
 
     init(
         config: Config,
-        navigationController: UINavigationController = UINavigationController(),
+        navigationController: UINavigationController = NavigationController(),
         keystore: Keystore,
-        analyticsCoordinator: AnalyticsCoordinator
+        analytics: AnalyticsLogger,
+        domainResolutionService: DomainResolutionServiceType
     ) {
         self.config = config
         self.navigationController = navigationController
         self.keystore = keystore
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
         navigationController.navigationBar.isTranslucent = false
     }
 
@@ -35,16 +38,16 @@ class WalletCoordinator: Coordinator {
     @discardableResult func start(_ entryPoint: WalletEntryPoint) -> Bool {
         switch entryPoint {
         case .importWallet:
-            let controller = ImportWalletViewController(keystore: keystore, analyticsCoordinator: analyticsCoordinator)
+            let controller = ImportWalletViewController(keystore: keystore, analytics: analytics, domainResolutionService: domainResolutionService)
             controller.delegate = self
-            controller.navigationItem.leftBarButtonItem = UIBarButtonItem(title: R.string.localizable.cancel(), style: .plain, target: self, action: #selector(dismiss))
+            controller.navigationItem.rightBarButtonItem = UIBarButtonItem.cancelBarButton(self, selector: #selector(dismiss))
             navigationController.viewControllers = [controller]
             importWalletViewController = controller
         case .watchWallet(let address):
-            let controller = ImportWalletViewController(keystore: keystore, analyticsCoordinator: analyticsCoordinator)
+            let controller = ImportWalletViewController(keystore: keystore, analytics: analytics, domainResolutionService: domainResolutionService)
             controller.delegate = self
             controller.watchAddressTextField.value = address?.eip55String ?? ""
-            controller.navigationItem.leftBarButtonItem = UIBarButtonItem(title: R.string.localizable.cancel(), style: .plain, target: self, action: #selector(dismiss))
+            controller.navigationItem.rightBarButtonItem = UIBarButtonItem.cancelBarButton(self, selector: #selector(dismiss))
             controller.showWatchTab()
             navigationController.viewControllers = [controller]
             importWalletViewController = controller
@@ -61,7 +64,7 @@ class WalletCoordinator: Coordinator {
     }
 
     func pushImportWallet() {
-        let controller = ImportWalletViewController(keystore: keystore, analyticsCoordinator: analyticsCoordinator)
+        let controller = ImportWalletViewController(keystore: keystore, analytics: analytics, domainResolutionService: domainResolutionService)
         controller.delegate = self
         controller.navigationItem.largeTitleDisplayMode = .never
         navigationController.pushViewController(controller, animated: true)
@@ -72,7 +75,7 @@ class WalletCoordinator: Coordinator {
             let result = keystore.createAccount()
             switch result {
             case .success(let account):
-                keystore.recentlyUsedWallet = Wallet(type: WalletType.real(account))
+                keystore.recentlyUsedWallet = account
             case .failure:
                 //TODO handle initial wallet creation error. App can't be used!
                 break
@@ -86,15 +89,10 @@ class WalletCoordinator: Coordinator {
         keystore.createAccount { [weak self] result in
             guard let strongSelf = self else { return }
             switch result {
-            case .success(let account):
+            case .success(let wallet):
                 //Not the best implementation, since there's some coupling, but it's clean. We need this so we don't show the What's New UI right after a wallet is created and clash with the pop up prompting user to back up the new wallet, for new installs and creating new wallets for existing installs
                 WhatsNewExperimentCoordinator.lastCreatedWalletTimestamp = Date()
 
-                let wallet = Wallet(type: WalletType.real(account))
-                //Bit of delay to wait for the UI animation to almost finish
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    WhereIsWalletAddressFoundOverlayView.show()
-                }
                 strongSelf.delegate?.didFinish(with: wallet, in: strongSelf)
             case .failure(let error):
                 //TODO this wouldn't work since navigationController isn't shown anymore
@@ -106,7 +104,7 @@ class WalletCoordinator: Coordinator {
 
     private func addWalletWith(entryPoint: WalletEntryPoint) {
         //Intentionally creating an instance of myself
-        let coordinator = WalletCoordinator(config: config, keystore: keystore, analyticsCoordinator: analyticsCoordinator)
+        let coordinator = WalletCoordinator(config: config, keystore: keystore, analytics: analytics, domainResolutionService: domainResolutionService)
         coordinator.delegate = self
         addCoordinator(coordinator)
         coordinator.start(entryPoint)
@@ -132,8 +130,8 @@ extension WalletCoordinator: ImportWalletViewControllerDelegate {
 
     func openQRCode(in controller: ImportWalletViewController) {
         guard let wallet = keystore.currentWallet, navigationController.ensureHasDeviceAuthorization() else { return }
-        let scanQRCodeCoordinator = ScanQRCodeCoordinator(analyticsCoordinator: analyticsCoordinator, navigationController: navigationController, account: wallet)
-        let coordinator = QRCodeResolutionCoordinator(config: config, coordinator: scanQRCodeCoordinator, usage: .importWalletOnly, account: wallet)
+        let scanQRCodeCoordinator = ScanQRCodeCoordinator(analytics: analytics, navigationController: navigationController, account: wallet, domainResolutionService: domainResolutionService)
+        let coordinator = QRCodeResolutionCoordinator(config: config, coordinator: scanQRCodeCoordinator, usage: .importWalletOnly, account: wallet, analytics: analytics)
         coordinator.delegate = self
         addCoordinator(coordinator)
         coordinator.start(fromSource: .importWalletScreen)
@@ -154,7 +152,7 @@ extension WalletCoordinator: QRCodeResolutionCoordinatorDelegate {
         importWalletViewController?.setValueForCurrentField(string: address.eip55String)
     }
 
-    func coordinator(_ coordinator: QRCodeResolutionCoordinator, didResolveTransactionType transactionType: TransactionType, token: TokenObject) {
+    func coordinator(_ coordinator: QRCodeResolutionCoordinator, didResolveTransactionType transactionType: TransactionType, token: Token) {
         removeCoordinator(coordinator)
         //no op
     }
@@ -235,6 +233,6 @@ extension WalletCoordinator: WalletCoordinatorDelegate {
 // MARK: Analytics
 extension WalletCoordinator {
     private func logInitialAction(_ action: Analytics.FirstWalletAction) {
-        analyticsCoordinator.log(action: Analytics.Action.firstWalletAction, properties: [Analytics.Properties.type.rawValue: action.rawValue])
+        analytics.log(action: Analytics.Action.firstWalletAction, properties: [Analytics.Properties.type.rawValue: action.rawValue])
     }
 }

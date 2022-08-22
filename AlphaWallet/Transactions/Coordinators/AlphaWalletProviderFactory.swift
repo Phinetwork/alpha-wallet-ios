@@ -3,8 +3,9 @@
 import Alamofire
 import Foundation
 import Moya
-import PromiseKit
+import PromiseKit 
 import Combine
+import AlphaWalletCore
 
 struct AlphaWalletProviderFactory {
     static let policies: [String: ServerTrustPolicy] = [:]
@@ -39,18 +40,42 @@ extension MoyaProvider {
     }
 }
 
+extension MoyaProvider {
+    func publisher(_ target: Target, callbackQueue: DispatchQueue? = .none, progress: ProgressBlock? = .none) -> AnyPublisher<Moya.Response, MoyaError> {
+        var cancelable: Moya.Cancellable?
+        let publisher = Deferred {
+            Future<Moya.Response, MoyaError> { [self] seal in
+                cancelable = self.request(target, callbackQueue: callbackQueue, progress: progress) { result in
+                    switch result {
+                    case .success(let response):
+                        seal(.success(response))
+                    case .failure(let error):
+                        seal(.failure(error))
+                    }
+                }
+            }
+        }.handleEvents(receiveCancel: {
+            cancelable?.cancel()
+        })
+
+        return publisher
+            .eraseToAnyPublisher()
+    }
+}
+
 extension Promise {
-    var publisher: AnyPublisher<T, Error> {
+    var publisher: AnyPublisher<T, PromiseError> {
         var isCanceled: Bool = false
         let publisher = Deferred {
-            Future<T, Error> { seal in
+            Future<T, PromiseError> { seal in
                 guard !isCanceled else { return }
+                let queue = DispatchQueue.global(qos: .userInitiated)
 
-                self.done { value in
+                self.done(on: queue, { value in
                     seal(.success((value)))
-                }.catch { error in
-                    seal(.failure(error))
-                }
+                }).catch(on: queue, { error in
+                    seal(.failure(.some(error: error)))
+                })
             }
         }.handleEvents(receiveCancel: {
             isCanceled = true

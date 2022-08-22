@@ -2,11 +2,9 @@
 
 import Foundation
 @testable import AlphaWallet
-import RealmSwift
 
 class FakeTokensDataStore: MultipleChainsTokensDataStore {
     convenience init(account: Wallet = .make(), servers: [RPCServer] = [.main]) {
-        let store = FakeRealmLocalStore()
-        self.init(store: store.getOrCreateStore(forWallet: account), servers: servers)
+        self.init(store: .fake(for: account), servers: servers)
     }
 }

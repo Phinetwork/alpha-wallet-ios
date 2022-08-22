@@ -14,11 +14,11 @@ class GetContractSymbol {
 
     func getSymbol(for contract: AlphaWallet.Address) -> Promise<String> {
         let functionName = "symbol"
-        return callSmartContract(withServer: server, contract: contract, functionName: functionName, abiString: web3swift.Web3.Utils.erc20ABI, timeout: Constants.fetchContractDataTimeout).map { symbolsResult -> String in
+        return callSmartContract(withServer: server, contract: contract, functionName: functionName, abiString: web3swift.Web3.Utils.erc20ABI).map { symbolsResult -> String in
             if let symbol = symbolsResult["0"] as? String {
                 return symbol
             } else {
-                throw AnyError(Web3Error(description: "Error extracting result from \(contract.eip55String).\(functionName)()"))
+                throw createSmartContractCallError(forContract: contract, functionName: functionName)
             }
         }
     }

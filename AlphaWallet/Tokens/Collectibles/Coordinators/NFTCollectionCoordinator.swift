@@ -13,7 +13,7 @@ import BigInt
 import Combine
 
 protocol NFTCollectionCoordinatorDelegate: class, CanOpenURL {
-    func didCancel(in coordinator: NFTCollectionCoordinator)
+    func didClose(in coordinator: NFTCollectionCoordinator)
     func didPress(for type: PaymentFlow, inViewController viewController: UIViewController, in coordinator: NFTCollectionCoordinator)
     func didTap(transaction: TransactionInstance, in coordinator: NFTCollectionCoordinator)
     func didTap(activity: Activity, in coordinator: NFTCollectionCoordinator)
@@ -21,109 +21,62 @@ protocol NFTCollectionCoordinatorDelegate: class, CanOpenURL {
 
 class NFTCollectionCoordinator: NSObject, Coordinator {
     private let keystore: Keystore
-    private let token: TokenObject
+    private let token: Token
+    private let session: WalletSession
+    private let sessions: ServerDictionary<WalletSession>
+    private let assetDefinitionStore: AssetDefinitionStore
+    private let analytics: AnalyticsLogger
+    private let openSea: OpenSea
+    private let activitiesService: ActivitiesServiceType
+    private var cancelable = Set<AnyCancellable>()
+    private let tokensService: TokenViewModelState & TokenHolderState
+
+    weak var delegate: NFTCollectionCoordinatorDelegate?
+    let navigationController: UINavigationController
+    var coordinators: [Coordinator] = []
     lazy var rootViewController: NFTCollectionViewController = {
-        let viewModel = NFTCollectionViewModel(token: token, forWallet: session.account, assetDefinitionStore: assetDefinitionStore, eventsDataStore: eventsDataStore)
-        let controller = NFTCollectionViewController(keystore: keystore, session: session, assetDefinition: assetDefinitionStore, analyticsCoordinator: analyticsCoordinator, viewModel: viewModel, activitiesService: activitiesService, eventsDataStore: eventsDataStore)
+        let viewModel = NFTCollectionViewModel(token: token, wallet: session.account, assetDefinitionStore: assetDefinitionStore, tokensService: tokensService, activitiesService: activitiesService, openSea: openSea)
+        let controller = NFTCollectionViewController(keystore: keystore, session: session, assetDefinition: assetDefinitionStore, analytics: analytics, viewModel: viewModel, sessions: sessions)
         controller.hidesBottomBarWhenPushed = true
         controller.delegate = self
 
         return controller
     }()
 
-    private let session: WalletSession
-    private let assetDefinitionStore: AssetDefinitionStore
-    private let eventsDataStore: NonActivityEventsDataStore
-    private let analyticsCoordinator: AnalyticsCoordinator
-    private let activitiesService: ActivitiesServiceType
-    weak var delegate: NFTCollectionCoordinatorDelegate?
-    let navigationController: UINavigationController
-    var coordinators: [Coordinator] = []
-    private var cancelable = Set<AnyCancellable>()
-
     init(
             session: WalletSession,
             navigationController: UINavigationController,
             keystore: Keystore,
-            token: TokenObject,
+            token: Token,
             assetDefinitionStore: AssetDefinitionStore,
-            eventsDataStore: NonActivityEventsDataStore,
-            analyticsCoordinator: AnalyticsCoordinator,
-            activitiesService: ActivitiesServiceType
+            analytics: AnalyticsLogger,
+            openSea: OpenSea,
+            activitiesService: ActivitiesServiceType,
+            tokensService: TokenViewModelState & TokenHolderState,
+            sessions: ServerDictionary<WalletSession>
     ) {
+        self.sessions = sessions
+        self.tokensService = tokensService
         self.activitiesService = activitiesService
         self.session = session
         self.keystore = keystore
         self.navigationController = navigationController
         self.token = token
         self.assetDefinitionStore = assetDefinitionStore
-        self.eventsDataStore = eventsDataStore
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
+        self.openSea = openSea
         navigationController.navigationBar.isTranslucent = false
     }
 
     func start() {
-        rootViewController.navigationItem.leftBarButtonItem = .backBarButton(self, selector: #selector(closeDidSelect))
         navigationController.pushViewController(rootViewController, animated: true)
-        subscribeForEthereumEventChanges()
     }
 
-    @objc private func closeDidSelect(_ sender: UIBarButtonItem) {
-        navigationController.popViewController(animated: true)
-        delegate?.didCancel(in: self)
-    }
+    func didClose(in viewController: NFTCollectionViewController) {
+        delegate?.didClose(in: self)
+    } 
 
-    private func subscribeForEthereumEventChanges() {
-        eventsDataStore
-            .recentEvents(forTokenContract: token.contractAddress)
-            .filter({ changeset in
-                switch changeset {
-                case .update(let events, _, let insertions, let modifications):
-                    return !insertions.map { events[$0] }.isEmpty || !modifications.map { events[$0] }.isEmpty
-                case .initial, .error:
-                    return false
-                }
-            })
-            .receive(on: DispatchQueue.main)
-            .sink(receiveValue: { [weak self] _ in
-                self?.refreshScreen()
-            }).store(in: &cancelable)
-
-        assetDefinitionStore
-            .assetsSignatureOrBodyChange(for: token.contractAddress)
-            .receive(on: DispatchQueue.main)
-            .sink(receiveValue: { [weak self] _ in
-                self?.refreshScreen()
-            }).store(in: &cancelable)
-    }
-
-    private func refreshScreen() {
-        for each in navigationController.viewControllers {
-            switch each {
-            case let vc as NFTCollectionViewController:
-                let viewModel = NFTCollectionViewModel(token: token, forWallet: session.account, assetDefinitionStore: assetDefinitionStore, eventsDataStore: eventsDataStore)
-                vc.configure(viewModel: viewModel)
-            case let vc as NFTAssetViewController:
-                let updatedTokenHolders = token.getTokenHolders(assetDefinitionStore: assetDefinitionStore, eventsDataStore: eventsDataStore, forWallet: session.account)
-                let tokenHolder = vc.viewModel.firstMatchingTokenHolder(fromTokenHolders: updatedTokenHolders)
-                if let tokenHolder = tokenHolder {
-                    let viewModel = NFTAssetViewModel(account: session.account, tokenId: tokenHolder.tokenId, token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore)
-                    vc.configure(viewModel: viewModel)
-                } 
-            case let vc as TokenInstanceActionViewController:
-                //TODO it reloads, but doesn't live-reload the changes because the action contains the HTML and it doesn't change
-                vc.configure()
-            default:
-                break
-            }
-        }
-    }
-
-    func stop() {
-        session.stop()
-    }
-
-    private func showChooseTokensCardTransferModeViewController(token: TokenObject,
+    private func showChooseTokensCardTransferModeViewController(token: Token,
                                                                 for tokenHolder: TokenHolder,
                                                                 in viewController: TransferTokensCardQuantitySelectionViewController) {
         let vc = makeChooseTokenCardTransferModeViewController(token: token, for: tokenHolder, paymentFlow: viewController.paymentFlow)
@@ -182,7 +135,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
     }
 
     private func showEnterSellTokensCardExpiryDateViewController(
-            token: TokenObject,
+            token: Token,
             for tokenHolder: TokenHolder,
             ethCost: Ether,
             in viewController: EnterSellTokensCardPriceQuantityViewController) {
@@ -191,13 +144,13 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
         viewController.navigationController?.pushViewController(vc, animated: true)
     }
 
-    private func showEnterQuantityViewControllerForRedeem(token: TokenObject, for tokenHolder: TokenHolder, in viewController: UIViewController) {
+    private func showEnterQuantityViewControllerForRedeem(token: Token, for tokenHolder: TokenHolder, in viewController: UIViewController) {
         let quantityViewController = makeRedeemTokensCardQuantitySelectionViewController(token: token, for: tokenHolder)
         quantityViewController.navigationItem.largeTitleDisplayMode = .never
         navigationController.pushViewController(quantityViewController, animated: true)
     }
 
-    private func showEnterQuantityViewControllerForTransfer(token: TokenObject, for tokenHolder: TokenHolder, forPaymentFlow paymentFlow: PaymentFlow, in viewController: UIViewController) {
+    private func showEnterQuantityViewControllerForTransfer(token: Token, for tokenHolder: TokenHolder, forPaymentFlow paymentFlow: PaymentFlow, in viewController: UIViewController) {
         let vc = makeTransferTokensCardQuantitySelectionViewController(token: token, for: tokenHolder, paymentFlow: paymentFlow)
         vc.navigationItem.largeTitleDisplayMode = .never
         viewController.navigationController?.pushViewController(vc, animated: true)
@@ -211,7 +164,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
         viewController.navigationController?.pushViewController(vc, animated: true)
     }
 
-    private func showTokenCardRedemptionViewController(token: TokenObject,
+    private func showTokenCardRedemptionViewController(token: Token,
                                                        for tokenHolder: TokenHolder,
                                                        in viewController: UIViewController) {
         let quantityViewController = makeTokenCardRedemptionViewController(token: token, for: tokenHolder)
@@ -219,57 +172,57 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
         viewController.navigationController?.pushViewController(quantityViewController, animated: true)
     }
 
-    private func makeRedeemTokensCardQuantitySelectionViewController(token: TokenObject, for tokenHolder: TokenHolder) -> RedeemTokenCardQuantitySelectionViewController {
+    private func makeRedeemTokensCardQuantitySelectionViewController(token: Token, for tokenHolder: TokenHolder) -> RedeemTokenCardQuantitySelectionViewController {
         let viewModel = RedeemTokenCardQuantitySelectionViewModel(token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore)
-        let controller = RedeemTokenCardQuantitySelectionViewController(analyticsCoordinator: analyticsCoordinator, token: token, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
+        let controller = RedeemTokenCardQuantitySelectionViewController(analytics: analytics, token: token, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
         controller.configure()
         controller.delegate = self
         return controller
     }
 
-    private func makeEnterSellTokensCardPriceQuantityViewController(token: TokenObject, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> EnterSellTokensCardPriceQuantityViewController {
+    private func makeEnterSellTokensCardPriceQuantityViewController(token: Token, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> EnterSellTokensCardPriceQuantityViewController {
         let viewModel = EnterSellTokensCardPriceQuantityViewControllerViewModel(token: token, tokenHolder: tokenHolder, server: session.server, assetDefinitionStore: assetDefinitionStore)
-        let controller = EnterSellTokensCardPriceQuantityViewController(analyticsCoordinator: analyticsCoordinator, paymentFlow: paymentFlow, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, walletSession: session, keystore: keystore)
+        let controller = EnterSellTokensCardPriceQuantityViewController(analytics: analytics, paymentFlow: paymentFlow, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, walletSession: session, keystore: keystore, service: tokensService)
         controller.configure()
         controller.delegate = self
         return controller
     }
 
-    private func makeEnterTransferTokensCardExpiryDateViewController(token: TokenObject, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> SetTransferTokensCardExpiryDateViewController {
+    private func makeEnterTransferTokensCardExpiryDateViewController(token: Token, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> SetTransferTokensCardExpiryDateViewController {
         let viewModel = SetTransferTokensCardExpiryDateViewControllerViewModel(token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore)
-        let controller = SetTransferTokensCardExpiryDateViewController(analyticsCoordinator: analyticsCoordinator, tokenHolder: tokenHolder, paymentFlow: paymentFlow, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
+        let controller = SetTransferTokensCardExpiryDateViewController(analytics: analytics, tokenHolder: tokenHolder, paymentFlow: paymentFlow, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
         controller.configure()
         controller.delegate = self
         return controller
     }
 
-    private func makeEnterSellTokensCardExpiryDateViewController(token: TokenObject, for tokenHolder: TokenHolder, ethCost: Ether, paymentFlow: PaymentFlow) -> SetSellTokensCardExpiryDateViewController {
+    private func makeEnterSellTokensCardExpiryDateViewController(token: Token, for tokenHolder: TokenHolder, ethCost: Ether, paymentFlow: PaymentFlow) -> SetSellTokensCardExpiryDateViewController {
         let viewModel = SetSellTokensCardExpiryDateViewControllerViewModel(token: token, tokenHolder: tokenHolder, ethCost: ethCost, server: session.server, assetDefinitionStore: assetDefinitionStore)
-        let controller = SetSellTokensCardExpiryDateViewController(analyticsCoordinator: analyticsCoordinator, paymentFlow: paymentFlow, tokenHolder: tokenHolder, ethCost: ethCost, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
+        let controller = SetSellTokensCardExpiryDateViewController(analytics: analytics, paymentFlow: paymentFlow, tokenHolder: tokenHolder, ethCost: ethCost, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
         controller.configure()
         controller.delegate = self
         return controller
     }
 
-    private func makeTokenCardRedemptionViewController(token: TokenObject, for tokenHolder: TokenHolder) -> TokenCardRedemptionViewController {
+    private func makeTokenCardRedemptionViewController(token: Token, for tokenHolder: TokenHolder) -> TokenCardRedemptionViewController {
         let viewModel = TokenCardRedemptionViewModel(token: token, tokenHolder: tokenHolder)
-        let controller = TokenCardRedemptionViewController(session: session, token: token, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, analyticsCoordinator: analyticsCoordinator, keystore: keystore)
+        let controller = TokenCardRedemptionViewController(session: session, token: token, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, analytics: analytics, keystore: keystore)
         controller.configure()
         controller.delegate = self
         return controller
     }
 
-    private func makeTransferTokensCardQuantitySelectionViewController(token: TokenObject, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> TransferTokensCardQuantitySelectionViewController {
+    private func makeTransferTokensCardQuantitySelectionViewController(token: Token, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> TransferTokensCardQuantitySelectionViewController {
         let viewModel = TransferTokensCardQuantitySelectionViewModel(token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore)
-        let controller = TransferTokensCardQuantitySelectionViewController(analyticsCoordinator: analyticsCoordinator, paymentFlow: paymentFlow, token: token, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: session.account)
+        let controller = TransferTokensCardQuantitySelectionViewController(analytics: analytics, paymentFlow: paymentFlow, token: token, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: session.account)
         controller.configure()
         controller.delegate = self
         return controller
     }
 
-    private func makeChooseTokenCardTransferModeViewController(token: TokenObject, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> ChooseTokenCardTransferModeViewController {
+    private func makeChooseTokenCardTransferModeViewController(token: Token, for tokenHolder: TokenHolder, paymentFlow: PaymentFlow) -> ChooseTokenCardTransferModeViewController {
         let viewModel = ChooseTokenCardTransferModeViewControllerViewModel(token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore)
-        let controller = ChooseTokenCardTransferModeViewController(analyticsCoordinator: analyticsCoordinator, tokenHolder: tokenHolder, paymentFlow: paymentFlow, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
+        let controller = ChooseTokenCardTransferModeViewController(analytics: analytics, tokenHolder: tokenHolder, paymentFlow: paymentFlow, viewModel: viewModel, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
         controller.configure()
         controller.delegate = self
         return controller
@@ -323,7 +276,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
         switch paymentFlow {
         case .send(let transactionType):
             server = transactionType.server
-        case .request:
+        case .request, .swap:
             return
         }
         let url = generateSellLink(
@@ -339,7 +292,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
             //Be annoying if user copies and we close the sell process
             if completed && activityType != UIActivity.ActivityType.copyToPasteboard {
                 strongSelf.navigationController.dismiss(animated: false) {
-                    strongSelf.delegate?.didCancel(in: strongSelf)
+                    strongSelf.delegate?.didClose(in: strongSelf)
                 }
             }
         }
@@ -351,7 +304,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
         switch paymentFlow {
         case .send(let transactionType):
             server = transactionType.server
-        case .request:
+        case .request, .swap:
             return
         }
 
@@ -363,7 +316,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
             //Be annoying if user copies and we close the transfer process
             if completed && activityType != UIActivity.ActivityType.copyToPasteboard {
                 strongSelf.navigationController.dismiss(animated: false) {
-                    strongSelf.delegate?.didCancel(in: strongSelf)
+                    strongSelf.delegate?.didClose(in: strongSelf)
                 }
             }
         }
@@ -389,7 +342,7 @@ class NFTCollectionCoordinator: NSObject, Coordinator {
 extension NFTCollectionCoordinator: NFTCollectionViewControllerDelegate {
 
     func didSelectAssetSelection(in viewController: NFTCollectionViewController) {
-        showTokenCardSelection(tokenHolders: viewController.viewModel.tokenHolders)
+        showTokenCardSelection(tokenHolders: viewController.viewModel.tokenHolders.value)
     }
 
     func didTap(transaction: TransactionInstance, in viewController: NFTCollectionViewController) {
@@ -417,17 +370,13 @@ extension NFTCollectionCoordinator: NFTCollectionViewControllerDelegate {
             vc = createNFTAssetViewController(tokenHolder: tokenHolder, tokenId: tokenHolder.tokenId, mode: mode)
         }
 
-        vc.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(selectionClosure: { _ in
-            navigationController?.popViewController(animated: true)
-        })
-
         navigationController?.pushViewController(vc, animated: true)
     }
 
     private func createNFTAssetListViewController(tokenHolder: TokenHolder) -> NFTAssetListViewController {
         let viewModel = NFTAssetListViewModel(tokenHolder: tokenHolder)
         let tokenCardViewFactory: TokenCardViewFactory = {
-            TokenCardViewFactory(token: token, assetDefinitionStore: assetDefinitionStore, analyticsCoordinator: analyticsCoordinator, keystore: keystore, wallet: session.account)
+            TokenCardViewFactory(token: token, assetDefinitionStore: assetDefinitionStore, analytics: analytics, keystore: keystore, wallet: session.account)
         }()
         let vc = NFTAssetListViewController(viewModel: viewModel, tokenCardViewFactory: tokenCardViewFactory)
         vc.delegate = self
@@ -435,24 +384,20 @@ extension NFTCollectionCoordinator: NFTCollectionViewControllerDelegate {
     }
 
     private func createNFTAssetViewController(tokenHolder: TokenHolder, tokenId: TokenId, mode: TokenInstanceViewMode = .interactive) -> UIViewController {
-        let viewModel = NFTAssetViewModel(account: session.account, tokenId: tokenId, token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore)
-        let vc = NFTAssetViewController(analyticsCoordinator: analyticsCoordinator, session: session, assetDefinitionStore: assetDefinitionStore, keystore: keystore, viewModel: viewModel, mode: mode)
+        let viewModel = NFTAssetViewModel(tokenId: tokenId, token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore, mode: mode, openSea: openSea, session: session, service: tokensService)
+        let vc = NFTAssetViewController(analytics: analytics, session: session, assetDefinitionStore: assetDefinitionStore, keystore: keystore, viewModel: viewModel)
         vc.delegate = self
         vc.navigationItem.largeTitleDisplayMode = .never
 
         return vc
     }
 
-    func didPressRedeem(token: TokenObject, tokenHolder: TokenHolder, in viewController: NFTCollectionViewController) {
+    func didPressRedeem(token: Token, tokenHolder: TokenHolder, in viewController: NFTCollectionViewController) {
         showEnterQuantityViewControllerForRedeem(token: token, for: tokenHolder, in: viewController)
     }
 
     func didPressSell(tokenHolder: TokenHolder, for paymentFlow: PaymentFlow, in viewController: NFTCollectionViewController) {
         showEnterPriceQuantityViewController(tokenHolder: tokenHolder, forPaymentFlow: paymentFlow, in: viewController)
-    }
-
-    func didCancel(in viewController: NFTCollectionViewController) {
-        delegate?.didCancel(in: self)
     }
 
     func didPressViewRedemptionInfo(in viewController: NFTCollectionViewController) {
@@ -468,10 +413,6 @@ extension NFTCollectionCoordinator: NFTCollectionViewControllerDelegate {
 
     func didTapTokenInstanceIconified(tokenHolder: TokenHolder, in viewController: NFTCollectionViewController) {
         let vc = createNFTAssetViewController(tokenHolder: tokenHolder, tokenId: tokenHolder.tokenId)
-        vc.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(selectionClosure: { _ in
-            viewController.navigationController?.popViewController(animated: true)
-        })
-
         viewController.navigationController?.pushViewController(vc, animated: true)
     }
 }
@@ -483,10 +424,6 @@ extension NFTCollectionCoordinator: NFTAssetListViewControllerDelegate {
 
     func didSelectTokenCard(in viewController: NFTAssetListViewController, tokenId: TokenId) {
         let vc = createNFTAssetViewController(tokenHolder: viewController.tokenHolder, tokenId: tokenId)
-        vc.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(selectionClosure: { _ in
-            viewController.navigationController?.popViewController(animated: true)
-        })
-
         viewController.navigationController?.pushViewController(vc, animated: true)
     }
 }
@@ -495,20 +432,20 @@ extension NFTCollectionCoordinator: NFTAssetSelectionCoordinatorDelegate {
 
     private func showTokenCardSelection(tokenHolders: [TokenHolder]) {
         let tokenCardViewFactory: TokenCardViewFactory = {
-            TokenCardViewFactory(token: token, assetDefinitionStore: assetDefinitionStore, analyticsCoordinator: analyticsCoordinator, keystore: keystore, wallet: session.account)
+            TokenCardViewFactory(token: token, assetDefinitionStore: assetDefinitionStore, analytics: analytics, keystore: keystore, wallet: session.account)
         }()
-        let coordinator = NFTAssetSelectionCoordinator(navigationController: navigationController, tokenObject: token, tokenHolders: tokenHolders, tokenCardViewFactory: tokenCardViewFactory)
+        let coordinator = NFTAssetSelectionCoordinator(navigationController: navigationController, token: token, tokenHolders: tokenHolders, tokenCardViewFactory: tokenCardViewFactory)
         addCoordinator(coordinator)
         coordinator.delegate = self
         coordinator.start()
     }
 
-    func didTapSend(in coordinator: NFTAssetSelectionCoordinator, tokenObject: TokenObject, tokenHolders: [TokenHolder]) {
+    func didTapSend(in coordinator: NFTAssetSelectionCoordinator, token: Token, tokenHolders: [TokenHolder]) {
         removeCoordinator(coordinator)
 
         let filteredTokenHolders = tokenHolders.filter { $0.totalSelectedCount > 0 }
         guard let vc = navigationController.visibleViewController else { return }
-        let transactionType: TransactionType = .erc1155Token(tokenObject, transferType: .singleTransfer, tokenHolders: filteredTokenHolders)
+        let transactionType: TransactionType = .erc1155Token(token, transferType: .singleTransfer, tokenHolders: filteredTokenHolders)
         delegate?.didPress(for: .send(type: .transaction(transactionType)), inViewController: vc, in: self)
     }
 
@@ -519,7 +456,7 @@ extension NFTCollectionCoordinator: NFTAssetSelectionCoordinatorDelegate {
 
 extension NFTCollectionCoordinator: NonFungibleTokenViewControllerDelegate {
 
-    func didPressTransfer(token: TokenObject, tokenHolder: TokenHolder, forPaymentFlow paymentFlow: PaymentFlow, in viewController: NFTAssetViewController) {
+    func didPressTransfer(token: Token, tokenHolder: TokenHolder, forPaymentFlow paymentFlow: PaymentFlow, in viewController: NFTAssetViewController) {
         switch token.type {
         case .erc721:
             delegate?.didPress(for: paymentFlow, inViewController: viewController, in: self)
@@ -541,10 +478,10 @@ extension NFTCollectionCoordinator: NonFungibleTokenViewControllerDelegate {
     }
 
     func didTap(action: TokenInstanceAction, tokenHolder: TokenHolder, viewController: NFTAssetViewController) {
-        delegate?.didPress(for: .send(type: .tokenScript(action: action, tokenObject: token, tokenHolder: tokenHolder)), inViewController: viewController, in: self)
+        delegate?.didPress(for: .send(type: .tokenScript(action: action, token: token, tokenHolder: tokenHolder)), inViewController: viewController, in: self)
     }
 
-    func didPressRedeem(token: TokenObject, tokenHolder: TokenHolder, in viewController: NFTAssetViewController) {
+    func didPressRedeem(token: Token, tokenHolder: TokenHolder, in viewController: NFTAssetViewController) {
         showEnterQuantityViewControllerForRedeem(token: token, for: tokenHolder, in: viewController)
     }
 
@@ -558,7 +495,7 @@ extension NFTCollectionCoordinator: NonFungibleTokenViewControllerDelegate {
 }
 
 extension NFTCollectionCoordinator: RedeemTokenCardQuantitySelectionViewControllerDelegate {
-    func didSelectQuantity(token: TokenObject, tokenHolder: TokenHolder, in viewController: RedeemTokenCardQuantitySelectionViewController) {
+    func didSelectQuantity(token: Token, tokenHolder: TokenHolder, in viewController: RedeemTokenCardQuantitySelectionViewController) {
         showTokenCardRedemptionViewController(token: token, for: tokenHolder, in: viewController)
     }
 
@@ -568,7 +505,7 @@ extension NFTCollectionCoordinator: RedeemTokenCardQuantitySelectionViewControll
 }
 
 extension NFTCollectionCoordinator: TransferTokenCardQuantitySelectionViewControllerDelegate {
-    func didSelectQuantity(token: TokenObject, tokenHolder: TokenHolder, in viewController: TransferTokensCardQuantitySelectionViewController) {
+    func didSelectQuantity(token: Token, tokenHolder: TokenHolder, in viewController: TransferTokensCardQuantitySelectionViewController) {
         showChooseTokensCardTransferModeViewController(token: token, for: tokenHolder, in: viewController)
     }
 
@@ -578,7 +515,7 @@ extension NFTCollectionCoordinator: TransferTokenCardQuantitySelectionViewContro
 }
 
 extension NFTCollectionCoordinator: EnterSellTokensCardPriceQuantityViewControllerDelegate {
-    func didEnterSellTokensPriceQuantity(token: TokenObject, tokenHolder: TokenHolder, ethCost: Ether, in viewController: EnterSellTokensCardPriceQuantityViewController) {
+    func didEnterSellTokensPriceQuantity(token: Token, tokenHolder: TokenHolder, ethCost: Ether, in viewController: EnterSellTokensCardPriceQuantityViewController) {
         showEnterSellTokensCardExpiryDateViewController(token: token, for: tokenHolder, ethCost: ethCost, in: viewController)
     }
 
@@ -608,13 +545,13 @@ extension NFTCollectionCoordinator: GenerateSellMagicLinkViewControllerDelegate 
 }
 
 extension NFTCollectionCoordinator: ChooseTokenCardTransferModeViewControllerDelegate {
-    func didChooseTransferViaMagicLink(token: TokenObject, tokenHolder: TokenHolder, in viewController: ChooseTokenCardTransferModeViewController) {
+    func didChooseTransferViaMagicLink(token: Token, tokenHolder: TokenHolder, in viewController: ChooseTokenCardTransferModeViewController) {
         let vc = makeEnterTransferTokensCardExpiryDateViewController(token: token, for: tokenHolder, paymentFlow: viewController.paymentFlow)
         vc.navigationItem.largeTitleDisplayMode = .never
         viewController.navigationController?.pushViewController(vc, animated: true)
     }
 
-    func didChooseTransferNow(token: TokenObject, tokenHolder: TokenHolder, in viewController: ChooseTokenCardTransferModeViewController) {
+    func didChooseTransferNow(token: Token, tokenHolder: TokenHolder, in viewController: ChooseTokenCardTransferModeViewController) {
         let transactionType: TransactionType = .init(nonFungibleToken: token, tokenHolders: [tokenHolder])
         delegate?.didPress(for: .send(type: .transaction(transactionType)), inViewController: viewController, in: self)
     }

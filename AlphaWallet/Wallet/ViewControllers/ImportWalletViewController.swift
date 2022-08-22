@@ -20,7 +20,8 @@ class ImportWalletViewController: UIViewController {
     private static let mnemonicSuggestionsBarHeight: CGFloat = ScreenChecker().isNarrowScreen ? 40 : 60
 
     private let keystore: Keystore
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
     private let viewModel = ImportWalletViewModel()
     //We don't actually use the rounded corner here, but it's a useful "content" view here
     private let roundedBackground = RoundedBackground()
@@ -96,7 +97,7 @@ class ImportWalletViewController: UIViewController {
         return textView
     }()
     lazy var watchAddressTextField: AddressTextField = {
-        let textField = AddressTextField()
+        let textField = AddressTextField(domainResolutionService: domainResolutionService)
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.delegate = self
         textField.returnKeyType = .done
@@ -180,9 +181,10 @@ class ImportWalletViewController: UIViewController {
 
     weak var delegate: ImportWalletViewControllerDelegate?
 
-    init(keystore: Keystore, analyticsCoordinator: AnalyticsCoordinator) {
+    init(keystore: Keystore, analytics: AnalyticsLogger, domainResolutionService: DomainResolutionServiceType) {
         self.keystore = keystore
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
 
         super.init(nibName: nil, bundle: nil)
 
@@ -485,7 +487,7 @@ class ImportWalletViewController: UIViewController {
 
     @objc func demo() {
         //Used for taking screenshots to the App Store by snapshot
-        let demoWallet = Wallet(type: .watch(AlphaWallet.Address(string: "0xD663bE6b87A992C5245F054D32C7f5e99f5aCc47")!))
+        let demoWallet = Wallet(address: AlphaWallet.Address(string: "0xD663bE6b87A992C5245F054D32C7f5e99f5aCc47")!, origin: .watch)
         delegate?.didImportAccount(account: demoWallet, in: self)
     }
 
@@ -678,7 +680,7 @@ extension ImportWalletViewController: TextFieldDelegate {
 }
 
 extension ImportWalletViewController: TextViewDelegate {
-    
+
     func didPaste(in textView: TextView) {
         view.endEditing(true)
         showCorrectTab()

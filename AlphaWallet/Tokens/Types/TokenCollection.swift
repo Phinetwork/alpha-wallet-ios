@@ -4,90 +4,112 @@ import Foundation
 import Result
 import PromiseKit
 import Combine
+import BigInt
 
-protocol TokenCollection {
-    var tokensViewModel: AnyPublisher<TokensViewModel, Never> { get }
-    var tokensDataStore: TokensDataStore { get }
+protocol TokenProvidable {
+    func token(for contract: AlphaWallet.Address) -> Token?
+    func token(for contract: AlphaWallet.Address, server: RPCServer) -> Token?
+}
 
+protocol TokenAddable {
+    @discardableResult func addCustom(tokens: [ERCToken], shouldUpdateBalance: Bool) -> [Token]
+}
+
+protocol TokenCollection: TokenProvidable, TokenAddable {
+    var tokens: AnyPublisher<[TokenViewModel], Never> { get }
+    //TODO: hide these 2 fields later
+    var tokensDataStore: TokensDataStore & DetectedContractsProvideble { get }
+    var tokensFilter: TokensFilter { get }
+
+    func mark(token: TokenIdentifiable, isHidden: Bool)
+    func token(for contract: AlphaWallet.Address) -> Token?
+    func token(for contract: AlphaWallet.Address, server: RPCServer) -> Token?
     func fetch()
+    func start()
 }
 
 ///This contains tokens across multiple-chains
-final class MultipleChainsTokenCollection: NSObject, TokenCollection {
-    private let tokensFilter: TokensFilter
-    private var tokensViewModelSubject: CurrentValueSubject<TokensViewModel, Never>
+class MultipleChainsTokenCollection: NSObject, TokenCollection {
+    
+    let tokensFilter: TokensFilter
+    private let sessions: ServerDictionary<WalletSession>
+    private let config: Config
+    private var tokensSubject: CurrentValueSubject<[TokenViewModel], Never> = .init([])
 
-    private let refereshSubject = PassthroughSubject<Void, Never>.init()
+    private let refreshSubject = PassthroughSubject<Void, Never>.init()
     private var cancelable = Set<AnyCancellable>()
+    private let coinTickersFetcher: CoinTickersFetcher
 
-    let tokensDataStore: TokensDataStore
-    var tokensViewModel: AnyPublisher<TokensViewModel, Never> {
-        tokensViewModelSubject.eraseToAnyPublisher()
+    let tokensDataStore: TokensDataStore & DetectedContractsProvideble
+    var tokens: AnyPublisher<[TokenViewModel], Never> {
+        tokensSubject.eraseToAnyPublisher()
     }
-    private let queue = DispatchQueue(label: "com.MultipleChainsTokenCollection.updateQueue")
+    private let assetDefinitionStore: AssetDefinitionStore
+    private let eventsDataStore: NonActivityEventsDataStore
 
-    init(tokensFilter: TokensFilter, tokensDataStore: TokensDataStore, config: Config) {
+    init(tokensFilter: TokensFilter, tokensDataStore: TokensDataStore & DetectedContractsProvideble, assetDefinitionStore: AssetDefinitionStore, eventsDataStore: NonActivityEventsDataStore, sessions: ServerDictionary<WalletSession>, config: Config, coinTickersFetcher: CoinTickersFetcher) {
         self.tokensFilter = tokensFilter
         self.tokensDataStore = tokensDataStore
-
-        let enabledServers = config.enabledServers
-        let tokenObjects = tokensDataStore.enabledTokenObjects(forServers: enabledServers)
-        self.tokensViewModelSubject = .init(.init(tokensFilter: tokensFilter, tokens: tokenObjects, config: config))
+        self.coinTickersFetcher = coinTickersFetcher
+        self.sessions = sessions
+        self.config = config
+        self.assetDefinitionStore = assetDefinitionStore
+        self.eventsDataStore = eventsDataStore
         super.init()
+    }
 
-        tokensDataStore
-            .enabledTokenObjectsChangesetPublisher(forServers: enabledServers)
-            .receive(on: queue)
-            .combineLatest(refereshSubject, { changeset, _ in return changeset.asTokensArray })
-            .map { MultipleChainsTokensDataStore.functional.erc20AddressForNativeTokenFilter(servers: enabledServers, tokenObjects: $0) }
-            .map { TokensViewModel(tokensFilter: tokensFilter, tokens: $0, config: config) }
-            .debounce(for: .seconds(Constants.refreshTokensThresholdSec), scheduler: queue)
+    func start() {
+        cancelable.cancellAll()
+
+        let initialOrForceSnapshot = Publishers.Merge(Just<Void>(()), refreshSubject)
+            .map { [tokensDataStore, config] _ in tokensDataStore.enabledTokens(for: config.enabledServers) }
+            .eraseToAnyPublisher()
+
+        let newOrChanged = tokensDataStore.enabledTokensPublisher(for: config.enabledServers)
+            .dropFirst()
+            .debounce(for: .seconds(Constants.refreshTokensThresholdSec), scheduler: RunLoop.main)
             .receive(on: RunLoop.main)
-            .sink { [weak self] tokensViewModel in
-                self?.tokensViewModelSubject.send(tokensViewModel)
+
+        Publishers.Merge(initialOrForceSnapshot, newOrChanged)
+            .map { MultipleChainsTokensDataStore.functional.erc20AddressForNativeTokenFilter(servers: self.config.enabledServers, tokens: $0) }
+            .map { TokensViewModel.functional.filterAwaySpuriousTokens($0) }
+            .map { MultipleChainsTokenCollection.buildViewModels(tokens: $0, sessions: self.sessions, assetDefinitionStore: self.assetDefinitionStore, eventsDataStore: self.eventsDataStore) }
+            .sink { [weak self] tokens in
+                self?.tokensSubject.send(tokens)
             }.store(in: &cancelable)
     }
 
-    func fetch() {
-        refereshSubject.send(())
+    func token(for contract: AlphaWallet.Address) -> Token? {
+        tokensDataStore.token(forContract: contract)
     }
-}
 
-extension RPCServer {
-    var displayOrderPriority: Int {
-        switch self {
-        case .main: return 1
-        case .xDai: return 2
-        case .classic: return 3
-        case .poa: return 4
-        case .ropsten: return 5
-        case .kovan: return 6
-        case .rinkeby: return 7
-        case .sokol: return 8
-        case .callisto: return 9
-        case .goerli: return 10
-        case .artis_sigma1: return 246529
-        case .artis_tau1: return 246785
-        case .binance_smart_chain: return 12
-        case .binance_smart_chain_testnet: return 13
-        case .custom(let custom): return 300000 + custom.chainID
-        case .heco: return 14
-        case .heco_testnet: return 15
-        case .fantom: return 16
-        case .fantom_testnet: return 17
-        case .avalanche: return 18
-        case .avalanche_testnet: return 19
-        case .polygon: return 20
-        case .mumbai_testnet: return 21
-        case .optimistic: return 22
-        case .optimisticKovan: return 23
-        case .cronosTestnet: return 24
-        case .arbitrum: return 25
-        case .arbitrumRinkeby: return 26
-        case .palm: return 27
-        case .palmTestnet: return 28
-        case .klaytnCypress: return 29
-        case .klaytnBaobabTestnet: return 30 
+    func token(for contract: AlphaWallet.Address, server: RPCServer) -> Token? {
+        tokensDataStore.token(forContract: contract, server: server)
+    }
+
+    func mark(token: TokenIdentifiable, isHidden: Bool) {
+        let primaryKey = TokenObject.generatePrimaryKey(fromContract: token.contractAddress, server: token.server)
+        tokensDataStore.updateToken(primaryKey: primaryKey, action: .isHidden(isHidden))
+    }
+
+    func fetch() {
+        refreshSubject.send(())
+    }
+
+    @discardableResult func addCustom(tokens: [ERCToken], shouldUpdateBalance: Bool) -> [Token] {
+        tokensDataStore.addCustom(tokens: tokens, shouldUpdateBalance: shouldUpdateBalance)
+    }
+
+    private static func buildViewModels(tokens: [Token], sessions: ServerDictionary<WalletSession>, assetDefinitionStore: AssetDefinitionStore, eventsDataStore: NonActivityEventsDataStore) -> [TokenViewModel] {
+        return tokens.map { token -> TokenViewModel in
+            let viewModel = TokenViewModel(token: token)
+
+            guard let session = sessions[safe: token.server] else { return viewModel }
+
+            let balance = session.tokenBalanceService.tokenBalance(.init(address: token.contractAddress, server: token.server)) ?? viewModel.balance
+            let overrides = TokenScriptOverrides(token: token, assetDefinitionStore: assetDefinitionStore, sessions: sessions, eventsDataStore: eventsDataStore)
+
+            return viewModel.override(balance: balance).override(tokenScriptOverrides: overrides)
         }
     }
 }

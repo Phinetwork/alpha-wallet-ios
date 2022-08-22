@@ -10,13 +10,14 @@ enum TransactionError: Error {
 
 protocol TransactionsServiceDelegate: AnyObject {
     func didCompleteTransaction(in service: TransactionsService, transaction: TransactionInstance)
-    func didExtractNewContracts(in service: TransactionsService, contracts: [AlphaWallet.Address])
+    func didExtractNewContracts(in service: TransactionsService, contractsAndServers: [AddressAndRPCServer])
 }
 
 class TransactionsService {
     let transactionDataStore: TransactionDataStore
     private let sessions: ServerDictionary<WalletSession>
-    private let tokensDataStore: TokensDataStore
+    private let tokensService: DetectedContractsProvideble & TokenProvidable & TokenAddable
+    private let analytics: AnalyticsLogger
     private var providers: [SingleChainTransactionProvider] = []
     private var config: Config { return sessions.anyValue.config }
     private let fetchLatestTransactionsQueue: OperationQueue = {
@@ -29,29 +30,26 @@ class TransactionsService {
 
     weak var delegate: TransactionsServiceDelegate?
 
-    var transactionsChangesetPublisher: AnyPublisher<[TransactionInstance], Never> {
+    var transactionsChangeset: AnyPublisher<[TransactionInstance], Never> {
         let servers = sessions.values.map { $0.server }
         return transactionDataStore
-            .transactionsChangesetPublisher(forFilter: .all, servers: servers)
+            .transactionsChangeset(forFilter: .all, servers: servers)
             .map { change -> [TransactionInstance] in
                 switch change {
-                case .initial(let transactions):
-                    return transactions
-                case .update(let transactions, _, _, _):
-                    return transactions
-                case .error:
-                    return []
+                case .initial(let transactions): return transactions
+                case .update(let transactions, _, _, _): return transactions
+                case .error: return []
                 }
-            }
-            .eraseToAnyPublisher()
+            }.eraseToAnyPublisher()
     }
     private var cancelable = Set<AnyCancellable>()
     private let queue = DispatchQueue(label: "com.TransactionsService.UpdateQueue")
 
-    init(sessions: ServerDictionary<WalletSession>, transactionDataStore: TransactionDataStore, tokensDataStore: TokensDataStore) {
+    init(sessions: ServerDictionary<WalletSession>, transactionDataStore: TransactionDataStore, analytics: AnalyticsLogger, tokensService: DetectedContractsProvideble & TokenProvidable & TokenAddable) {
         self.sessions = sessions
+        self.tokensService = tokensService
         self.transactionDataStore = transactionDataStore
-        self.tokensDataStore = tokensDataStore
+        self.analytics = analytics
 
         setupSingleChainTransactionProviders()
 
@@ -63,9 +61,8 @@ class TransactionsService {
                     self?.stopTimers()
                 case .willEnterForeground:
                     self?.restartTimers()
-                } 
+                }
             }.store(in: &cancelable)
-
     }
 
     deinit {
@@ -80,11 +77,11 @@ class TransactionsService {
     private func setupSingleChainTransactionProviders() {
         providers = sessions.values.map { each in
             let providerType = each.server.transactionProviderType
-            let tokensFromTransactionsFetcher = TokensFromTransactionsFetcher(tokensDataStore: tokensDataStore, session: each)
+            let tokensFromTransactionsFetcher = TokensFromTransactionsFetcher(detectedTokens: tokensService, session: each)
             tokensFromTransactionsFetcher.delegate = self
-            let provider = providerType.init(session: each, transactionDataStore: transactionDataStore, tokensDataStore: tokensDataStore, fetchLatestTransactionsQueue: fetchLatestTransactionsQueue, tokensFromTransactionsFetcher: tokensFromTransactionsFetcher)
+            let provider = providerType.init(session: each, analytics: analytics, transactionDataStore: transactionDataStore, tokensService: tokensService, fetchLatestTransactionsQueue: fetchLatestTransactionsQueue, tokensFromTransactionsFetcher: tokensFromTransactionsFetcher)
             provider.delegate = self
-            
+
             return provider
         }
     }
@@ -93,7 +90,7 @@ class TransactionsService {
         for each in providers {
             each.start()
         }
-        
+
         queue.async {
             self.removeUnknownTransactions()
         }
@@ -127,9 +124,9 @@ class TransactionsService {
 
     func addSentTransaction(_ transaction: SentTransaction) {
         let session = sessions[transaction.original.server]
-        
+
         TransactionDataStore.pendingTransactionsInformation[transaction.id] = (server: transaction.original.server, data: transaction.original.data, transactionType: transaction.original.transactionType, gasPrice: transaction.original.gasPrice)
-        let token = transaction.original.to.flatMap { tokensDataStore.token(forContract: $0, server: transaction.original.server) }
+        let token = transaction.original.to.flatMap { tokensService.token(for: $0, server: transaction.original.server) }
         let transaction = TransactionInstance.from(from: session.account.address, transaction: transaction, token: token)
         transactionDataStore.add(transactions: [transaction])
     }
@@ -142,9 +139,10 @@ class TransactionsService {
 }
 
 extension TransactionsService: TokensFromTransactionsFetcherDelegate {
-    func didExtractTokens(in fetcher: TokensFromTransactionsFetcher, contracts: [AlphaWallet.Address], tokenUpdates: [TokenUpdate]) {
-        tokensDataStore.add(tokenUpdates: tokenUpdates)
-        delegate?.didExtractNewContracts(in: self, contracts: contracts)
+
+    func didExtractTokens(in fetcher: TokensFromTransactionsFetcher, contractsAndServers: [AddressAndRPCServer], tokenUpdates: [TokenUpdate]) {
+        tokensService.add(tokenUpdates: tokenUpdates)
+        delegate?.didExtractNewContracts(in: self, contractsAndServers: contractsAndServers)
     }
 }
 

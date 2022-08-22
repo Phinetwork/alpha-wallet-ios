@@ -4,6 +4,7 @@ import AWSSNS
 import AWSCore
 import PromiseKit
 import UserNotifications
+import AlphaWalletAddress
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate, UISplitViewControllerDelegate {
@@ -18,6 +19,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UISplitViewControllerDele
         return ProtectionCoordinator()
     }()
     private lazy var reportProvider = ReportProvider()
+    private let addressStorage = FileAddressStorage()
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
@@ -30,14 +32,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UISplitViewControllerDele
                 reportProvider.start()
             }
 
+            register(addressStorage: addressStorage)
             //NOTE: we move AnalyticsService creation from AppCoordinator.init method to allow easily replace
-            let analyticsService = AnalyticsService()
+            let analytics = AnalyticsService()
             let walletAddressesStore: WalletAddressesStore = EtherKeystore.migratedWalletAddressesStore(userDefaults: .standardOrForTests)
-            let keystore: Keystore = try EtherKeystore(walletAddressesStore: walletAddressesStore, analyticsCoordinator: analyticsService)
-            let navigationController = UINavigationController()
+            let keystore: Keystore = try EtherKeystore(walletAddressesStore: walletAddressesStore, analytics: analytics)
+            let navigationController: UINavigationController = .withOverridenBarAppearence()
             navigationController.view.backgroundColor = Colors.appWhite
 
-            appCoordinator = try AppCoordinator(window: window!, analyticsService: analyticsService, keystore: keystore, walletAddressesStore: walletAddressesStore, navigationController: navigationController)
+            appCoordinator = try AppCoordinator(window: window!, analytics: analytics, keystore: keystore, walletAddressesStore: walletAddressesStore, navigationController: navigationController)
             appCoordinator.start()
 
             if let shortcutItem = launchOptions?[UIApplication.LaunchOptionsKey.shortcutItem] as? UIApplicationShortcutItem, shortcutItem.type == Constants.launchShortcutKey {
@@ -100,7 +103,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UISplitViewControllerDele
 
     // URI scheme links and AirDrop
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        return appCoordinator.handleUniversalLink(url: url)
+        return handleUniversalLink(url: url, source: .customUrlScheme)
     }
 
     func application(_ application: UIApplication,
@@ -113,7 +116,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UISplitViewControllerDele
 
         var handled = false
         if let url = userActivity.webpageURL {
-            handled = handleUniversalLink(url: url)
+            handled = handleUniversalLink(url: url, source: .deeplink)
         }
         //TODO: if we handle other types of URLs, check if handled==false, then we pass the url to another handlers
         return handled
@@ -183,9 +186,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UISplitViewControllerDele
         //no op
     }
 
-    @discardableResult private func handleUniversalLink(url: URL) -> Bool {
-        let handled = appCoordinator.handleUniversalLink(url: url)
+    private func handleUniversalLink(url: URL, source: UrlSource) -> Bool {
+        let handled = appCoordinator.handleUniversalLink(url: url, source: source)
         return handled
     }
 }
-

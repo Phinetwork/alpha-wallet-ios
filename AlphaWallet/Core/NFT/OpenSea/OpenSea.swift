@@ -2,52 +2,40 @@
 
 import Foundation
 import PromiseKit
+import AlphaWalletCore
 import AlphaWalletOpenSea
 
 final class OpenSea {
-    private let storage: Storage<[AddressAndRPCServer: OpenSeaNonFungiblesToAddress]> = .init(fileName: "OpenSea", defaultValue: [:])
-    private var cachedPromises: AtomicDictionary<AddressAndRPCServer, Promise<OpenSeaNonFungiblesToAddress>> = .init()
-    private let queue: DispatchQueue = DispatchQueue(label: "com.OpenSea.UpdateQueue")
-    private lazy var networkProvider: OpenSeaNetworkProvider = OpenSeaNetworkProvider(queue: queue)
+    private let analytics: AnalyticsLogger
+    private let storage: Storage<[AddressAndRPCServer: OpenSeaAddressesToNonFungibles]> = .init(fileName: "OpenSea", defaultValue: [:])
+    private let queue: DispatchQueue
+    private lazy var networkProvider: OpenSeaNetworkProvider = OpenSeaNetworkProvider(analytics: analytics, queue: queue)
+
+    init(analytics: AnalyticsLogger, queue: DispatchQueue) {
+        self.analytics = analytics
+        self.queue = queue
+    }
 
     static func isServerSupported(_ server: RPCServer) -> Bool {
         switch server {
         case .main, .rinkeby:
             return true
-        case .kovan, .ropsten, .poa, .sokol, .classic, .callisto, .custom, .goerli, .xDai, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+        case .kovan, .ropsten, .poa, .sokol, .classic, .callisto, .custom, .goerli, .xDai, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
             return false
         }
     }
 
-    func nonFungible(wallet: Wallet, server: RPCServer) -> Promise<OpenSeaNonFungiblesToAddress> {
+    func nonFungible(wallet: Wallet, server: RPCServer) -> Promise<OpenSeaAddressesToNonFungibles> {
         let key: AddressAndRPCServer = .init(address: wallet.address, server: server)
 
         guard OpenSea.isServerSupported(key.server) else {
             return .value([:])
         }
 
-        return makeFetchPromise(for: key)
+        return fetchFromLocalAndRemotePromise(key: key)
     }
 
-    private func makeFetchPromise(for key: AddressAndRPCServer) -> Promise<OpenSeaNonFungiblesToAddress> {
-        if let promise = cachedPromises[key] {
-            if promise.isResolved {
-                let promise = fetchFromLocalAndRemotePromise(key: key)
-                cachedPromises[key] = promise
-
-                return promise
-            } else {
-                return promise
-            }
-        } else {
-            let promise = fetchFromLocalAndRemotePromise(key: key)
-            cachedPromises[key] = promise
-
-            return promise
-        }
-    }
-
-    private func fetchFromLocalAndRemotePromise(key: AddressAndRPCServer) -> Promise<OpenSeaNonFungiblesToAddress> {
+    private func fetchFromLocalAndRemotePromise(key: AddressAndRPCServer) -> Promise<OpenSeaAddressesToNonFungibles> {
         return networkProvider
             .fetchAssetsPromise(address: key.address, server: key.server)
             .map(on: queue, { [weak storage] result in
@@ -65,16 +53,14 @@ final class OpenSea {
                 }
 
                 return storage?.value[key] ?? result.result
-            }).ensure(on: queue, {
-                self.cachedPromises[key] = .none
             })
     }
 
-    static func fetchAssetImageUrl(for value: Eip155URL, server: RPCServer) -> Promise<URL> {
-        OpenSea().networkProvider.fetchAssetImageUrl(for: value, server: server)
+    func fetchAssetImageUrl(for value: Eip155URL, server: RPCServer) -> Promise<URL> {
+        networkProvider.fetchAssetImageUrl(for: value, server: server)
     }
 
-    static func collectionStats(slug: String, server: RPCServer) -> Promise<Stats> {
-        OpenSea().networkProvider.collectionStats(slug: slug, server: server)
+    func collectionStats(slug: String, server: RPCServer) -> Promise<Stats> {
+        networkProvider.collectionStats(slug: slug, server: server)
     }
 }

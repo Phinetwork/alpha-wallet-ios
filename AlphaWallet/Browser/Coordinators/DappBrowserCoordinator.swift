@@ -24,7 +24,8 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
     private let sessions: ServerDictionary<WalletSession>
     private let keystore: Keystore
     private var config: Config
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
     private var browserNavBar: DappBrowserNavigationBar? {
         return navigationController.navigationBar as? DappBrowserNavigationBar
     }
@@ -34,7 +35,7 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
     private let sharedRealm: Realm
     private let browserOnly: Bool
     private let restartQueue: RestartTaskQueue
-
+    private let tokensService: TokenViewModelState
     private lazy var bookmarksStore: BookmarksStore = {
         return BookmarksStore(realm: sharedRealm)
     }()
@@ -69,7 +70,7 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
             navigationController.isToolbarHidden = !enableToolbar
         }
     }
-
+    private let assetDefinitionStore: AssetDefinitionStore
     private var currentUrl: URL? {
         return browserViewController.webView.url
     }
@@ -96,17 +97,22 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
         sharedRealm: Realm,
         browserOnly: Bool,
         restartQueue: RestartTaskQueue,
-        analyticsCoordinator: AnalyticsCoordinator
+        analytics: AnalyticsLogger,
+        domainResolutionService: DomainResolutionServiceType,
+        assetDefinitionStore: AssetDefinitionStore,
+        tokensService: TokenViewModelState
     ) {
-        self.navigationController = UINavigationController(navigationBarClass: DappBrowserNavigationBar.self, toolbarClass: nil)
+        self.tokensService = tokensService
+        self.navigationController = NavigationController(navigationBarClass: DappBrowserNavigationBar.self, toolbarClass: nil)
         self.sessions = sessions
         self.keystore = keystore
         self.config = config
         self.sharedRealm = sharedRealm
         self.browserOnly = browserOnly
         self.restartQueue = restartQueue
-        self.analyticsCoordinator = analyticsCoordinator
-
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
+        self.assetDefinitionStore = assetDefinitionStore
         super.init()
         //Necessary so that some sites don't bleed into (under) navigation bar after we tweak global styles for navigationBars after adding large title support
         navigationController.navigationBar.isTranslucent = false
@@ -161,16 +167,22 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
 
     private func executeTransaction(account: AlphaWallet.Address, action: DappAction, callbackID: Int, transaction: UnconfirmedTransaction, type: ConfirmType, server: RPCServer) {
         pendingTransaction = .data(callbackID: callbackID)
-        let coordinator = TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: .dappTransaction(confirmType: type, keystore: keystore), analyticsCoordinator: analyticsCoordinator)
-        coordinator.delegate = self
-        addCoordinator(coordinator)
-        coordinator.start(fromSource: .browser)
+        do {
+            let coordinator = try TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: .dappTransaction(confirmType: type), analytics: analytics, domainResolutionService: domainResolutionService, keystore: keystore, assetDefinitionStore: assetDefinitionStore, tokensService: tokensService)
+            coordinator.delegate = self
+            addCoordinator(coordinator)
+            coordinator.start(fromSource: .browser)
+        } catch {
+            UIApplication.shared
+                .presentedViewController(or: navigationController)
+                .displayError(message: error.prettyError)
+        }
     }
 
     private func ethCall(callbackID: Int, from: AlphaWallet.Address?, to: AlphaWallet.Address?, value: String?, data: String, server: RPCServer) {
         let request = EthCallRequest(from: from, to: to, value: value, data: data)
         firstly {
-            Session.send(EtherServiceRequest(server: server, batch: BatchFactory().create(request)))
+            Session.send(EtherServiceRequest(server: server, batch: BatchFactory().create(request)), server: server, analytics: analytics)
         }.done { result in
             let callback = DappCallback(id: callbackID, value: .ethCall(result))
             self.browserViewController.notifyFinish(callbackID: callbackID, value: .success(callback))
@@ -205,7 +217,7 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
 
     private func signMessage(with type: SignMessageType, account: AlphaWallet.Address, callbackID: Int) {
         firstly {
-            SignMessageCoordinator.promise(analyticsCoordinator: analyticsCoordinator, navigationController: navigationController, keystore: keystore, coordinator: self, signType: type, account: account, source: .dappBrowser, walletConnectDappRequesterViewModel: nil)
+            SignMessageCoordinator.promise(analytics: analytics, navigationController: navigationController, keystore: keystore, coordinator: self, signType: type, account: account, source: .dappBrowser, requester: nil)
         }.done { data in
             let callback: DappCallback
             switch type {
@@ -350,7 +362,7 @@ final class DappBrowserCoordinator: NSObject, Coordinator {
     private func scanQrCode() {
         guard navigationController.ensureHasDeviceAuthorization() else { return }
 
-        let coordinator = ScanQRCodeCoordinator(analyticsCoordinator: analyticsCoordinator, navigationController: navigationController, account: session.account)
+        let coordinator = ScanQRCodeCoordinator(analytics: analytics, navigationController: navigationController, account: session.account, domainResolutionService: domainResolutionService)
         coordinator.delegate = self
         addCoordinator(coordinator)
         coordinator.start(fromSource: .browserScreen)
@@ -475,7 +487,7 @@ extension DappBrowserCoordinator: BrowserViewControllerDelegate {
     func didCall(action: DappAction, callbackID: Int, inBrowserViewController viewController: BrowserViewController) {
         func rejectDappAction() {
             browserViewController.notifyFinish(callbackID: callbackID, value: .failure(DAppError.cancelled))
-            navigationController.topViewController?.displayError(error: InCoordinatorError.onlyWatchAccount)
+            navigationController.topViewController?.displayError(error: ActiveWalletViewModel.Error.onlyWatchAccount)
         }
 
         func performDappAction(account: AlphaWallet.Address) {
@@ -802,10 +814,8 @@ extension DappBrowserCoordinator: EditMyDappViewControllerDelegate {
         refreshDapps()
     }
 
-    func didTapCancel(inViewController viewController: EditMyDappViewController) {
+    func didClose(in viewController: EditMyDappViewController) {
         browserNavBar?.setBrowserBar(hidden: false)
-
-        navigationController.popViewController(animated: true)
     }
 }
 
@@ -869,34 +879,34 @@ extension DappBrowserCoordinator: CanOpenURL {
 // MARK: Analytics
 extension DappBrowserCoordinator {
     private func logReload() {
-        analyticsCoordinator.log(action: Analytics.Action.reloadBrowser)
+        analytics.log(action: Analytics.Action.reloadBrowser)
     }
 
     private func logShare() {
-        analyticsCoordinator.log(action: Analytics.Action.shareUrl, properties: [Analytics.Properties.source.rawValue: "browser"])
+        analytics.log(action: Analytics.Action.shareUrl, properties: [Analytics.Properties.source.rawValue: "browser"])
     }
 
     private func logAddDapp() {
-        analyticsCoordinator.log(action: Analytics.Action.addDapp)
+        analytics.log(action: Analytics.Action.addDapp)
     }
 
     private func logSwitchServer() {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.switchServers, properties: [Analytics.Properties.source.rawValue: "browser"])
+        analytics.log(navigation: Analytics.Navigation.switchServers, properties: [Analytics.Properties.source.rawValue: "browser"])
     }
 
     private func logShowDapps() {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.showDapps)
+        analytics.log(navigation: Analytics.Navigation.showDapps)
     }
 
     private func logShowHistory() {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.showHistory)
+        analytics.log(navigation: Analytics.Navigation.showHistory)
     }
 
     private func logTapMore() {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.tapBrowserMore)
+        analytics.log(navigation: Analytics.Navigation.tapBrowserMore)
     }
 
     private func logEnterUrl() {
-        analyticsCoordinator.log(action: Analytics.Action.enterUrl)
+        analytics.log(action: Analytics.Action.enterUrl)
     }
 }

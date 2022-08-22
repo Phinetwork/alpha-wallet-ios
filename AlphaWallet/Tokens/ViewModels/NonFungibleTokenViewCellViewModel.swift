@@ -5,25 +5,14 @@ import UIKit
 import BigInt
 
 struct NonFungibleTokenViewCellViewModel {
-    private let token: TokenObject
-    private let server: RPCServer
-    private let assetDefinitionStore: AssetDefinitionStore
+    private let token: TokenViewModel
     private let isVisible: Bool
-    private let eventsDataStore: NonActivityEventsDataStore
-    private let wallet: Wallet
+    let accessoryType: UITableViewCell.AccessoryType
 
-    init(token: TokenObject, server: RPCServer, assetDefinitionStore: AssetDefinitionStore, eventsDataStore: NonActivityEventsDataStore, wallet: Wallet, isVisible: Bool = true) {
-        self.eventsDataStore = eventsDataStore
-        self.wallet = wallet
+    init(token: TokenViewModel, isVisible: Bool = true, accessoryType: UITableViewCell.AccessoryType = .none) {
         self.token = token
-        self.server = server
-        self.assetDefinitionStore = assetDefinitionStore
         self.isVisible = isVisible
-    }
-
-    private var amount: String {
-        let actualBalance = token.nonZeroBalance
-        return actualBalance.count.toString()
+        self.accessoryType = accessoryType
     }
 
     var blockChainNameFont: UIFont {
@@ -35,11 +24,11 @@ struct NonFungibleTokenViewCellViewModel {
     }
 
     var blockChainNameBackgroundColor: UIColor {
-        return server.blockChainNameColor
+        return token.server.blockChainNameColor
     }
 
     var blockChainTag: String {
-        return "  \(server.name)     "
+        return "  \(token.server.name)     "
     }
 
     var blockChainNameTextAlignment: NSTextAlignment {
@@ -51,7 +40,7 @@ struct NonFungibleTokenViewCellViewModel {
     }
 
     var blockChainName: String {
-        return server.blockChainName
+        return token.server.blockChainName
     }
 
     var backgroundColor: UIColor {
@@ -59,7 +48,7 @@ struct NonFungibleTokenViewCellViewModel {
     }
 
     var contentsBackgroundColor: UIColor {
-        return Screen.TokenCard.Color.background
+        return Configuration.Color.Semantic.tableViewCellBackground
     }
 
     var contentsCornerRadius: CGFloat {
@@ -67,17 +56,16 @@ struct NonFungibleTokenViewCellViewModel {
     }
 
     var titleAttributedString: NSAttributedString {
-        let title = token.shortTitleInPluralForm(withAssetDefinitionStore: assetDefinitionStore, eventsDataStore: eventsDataStore, forWallet: wallet)
-        return .init(string: title, attributes: [
+        return .init(string: token.tokenScriptOverrides?.shortTitleInPluralForm ?? "-", attributes: [
             .font: Screen.TokenCard.Font.title,
             .foregroundColor: Screen.TokenCard.Color.title
         ])
     }
 
     var tickersAmountAttributedString: NSAttributedString {
-        return .init(string: "\(amount) \(token.symbol)", attributes: [
+        return .init(string: "\(token.nonZeroBalance.count.toString()) \(token.symbol)", attributes: [
             .font: Screen.TokenCard.Font.subtitle,
-            .foregroundColor: Screen.TokenCard.Color.subtitle
+            .foregroundColor: Configuration.Color.Semantic.defaultForegroundText
         ])
     }
 
@@ -90,7 +78,24 @@ struct NonFungibleTokenViewCellViewModel {
     }
 
     var blockChainTagViewModel: BlockchainTagLabelViewModel {
-        return .init(server: server)
+        return .init(server: token.server)
     }
 
+}
+
+extension NonFungibleTokenViewCellViewModel: Hashable {
+    static func == (lhs: NonFungibleTokenViewCellViewModel, rhs: NonFungibleTokenViewCellViewModel) -> Bool {
+        return lhs.token == rhs.token &&
+            lhs.token.tokenScriptOverrides?.shortTitleInPluralForm == rhs.token.tokenScriptOverrides?.shortTitleInPluralForm &&
+            lhs.token.nonZeroBalance.count.toString() == rhs.token.nonZeroBalance.count.toString()
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(isVisible)
+        hasher.combine(accessoryType)
+        hasher.combine(token.contractAddress)
+        hasher.combine(token.server)
+        hasher.combine(token.tokenScriptOverrides?.shortTitleInPluralForm)
+        hasher.combine(token.nonZeroBalance.count)
+    }
 }

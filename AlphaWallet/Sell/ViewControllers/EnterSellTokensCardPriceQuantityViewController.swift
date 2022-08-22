@@ -5,12 +5,12 @@ import BigInt
 import Combine
 
 protocol EnterSellTokensCardPriceQuantityViewControllerDelegate: class, CanOpenURL {
-    func didEnterSellTokensPriceQuantity(token: TokenObject, tokenHolder: TokenHolder, ethCost: Ether, in viewController: EnterSellTokensCardPriceQuantityViewController)
+    func didEnterSellTokensPriceQuantity(token: Token, tokenHolder: TokenHolder, ethCost: Ether, in viewController: EnterSellTokensCardPriceQuantityViewController)
     func didPressViewInfo(in viewController: EnterSellTokensCardPriceQuantityViewController)
 }
 
 class EnterSellTokensCardPriceQuantityViewController: UIViewController, TokenVerifiableStatusViewController {
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private let roundedBackground = RoundedBackground()
     private let scrollView = UIScrollView()
     private let header = TokensCardViewControllerTitleHeader()
@@ -55,17 +55,19 @@ class EnterSellTokensCardPriceQuantityViewController: UIViewController, TokenVer
     weak var delegate: EnterSellTokensCardPriceQuantityViewControllerDelegate?
     private let walletSession: WalletSession
     private var cancelable = Set<AnyCancellable>()
-
+    private let service: TokenViewModelState
 // swiftlint:disable function_body_length
     init(
-            analyticsCoordinator: AnalyticsCoordinator,
+            analytics: AnalyticsLogger,
             paymentFlow: PaymentFlow,
             viewModel: EnterSellTokensCardPriceQuantityViewControllerViewModel,
             assetDefinitionStore: AssetDefinitionStore,
             walletSession: WalletSession,
-            keystore: Keystore
+            keystore: Keystore,
+            service: TokenViewModelState
     ) {
-        self.analyticsCoordinator = analyticsCoordinator
+        self.service = service
+        self.analytics = analytics
         self.paymentFlow = paymentFlow
         self.walletSession = walletSession
         self.viewModel = viewModel
@@ -76,7 +78,7 @@ class EnterSellTokensCardPriceQuantityViewController: UIViewController, TokenVer
         case .backedByOpenSea:
             tokenRowView = OpenSeaNonFungibleTokenCardRowView(tokenView: .viewIconified)
         case .notBackedByOpenSea:
-            tokenRowView = TokenCardRowView(analyticsCoordinator: analyticsCoordinator, server: viewModel.token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: walletSession.account)
+            tokenRowView = TokenCardRowView(analytics: analytics, server: viewModel.token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: walletSession.account)
         }
 
         super.init(nibName: nil, bundle: nil)
@@ -98,12 +100,11 @@ class EnterSellTokensCardPriceQuantityViewController: UIViewController, TokenVer
         dollarCostLabelLabel.translatesAutoresizingMaskIntoConstraints = false
         dollarCostLabel.translatesAutoresizingMaskIntoConstraints = false
         pricePerTokenField.translatesAutoresizingMaskIntoConstraints = false
+        pricePerTokenField.selectCurrencyButton.hasToken = true
 
-        walletSession
-            .tokenBalanceService
-            .etherToFiatRatePublisher
-            .map { $0.flatMap { NSDecimalNumber(value: $0) } }
-            .receive(on: RunLoop.main)
+        let etherToken: Token = MultipleChainsTokensDataStore.functional.etherToken(forServer: walletSession.server)
+        service.tokenViewModelPublisher(for: etherToken)
+            .map { $0?.balance.ticker.flatMap { NSDecimalNumber(value: $0.price_usd) } }
             .sink { [weak pricePerTokenField] value in
                 pricePerTokenField?.cryptoToDollarRate = value
             }.store(in: &cancelable)

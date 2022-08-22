@@ -7,21 +7,28 @@
 
 import Foundation
 
-fileprivate struct Contract: Decodable {
+struct Contract: Codable, Hashable {
     let address: String
     let chainId: Int
+
     var key: String {
         let returnKey = address + ":" + String(chainId)
         return returnKey.trimmed.lowercased()
     }
 }
 
-fileprivate struct TokenEntry: Decodable {
+extension Contract: Equatable {
+    static func == (lhs: Contract, rhs: Contract) -> Bool {
+        return lhs.key == rhs.key
+    }
+}
+
+struct TokenEntry: Decodable {
     let contracts: [Contract]
     let group: String?
 }
 
-fileprivate class TokenJsonReader {
+class TokenJsonReader {
 
     enum error: Error {
         case duplicateKey(String)
@@ -81,11 +88,22 @@ fileprivate class TokenJsonReader {
 
 }
 
-fileprivate extension TokenObject {
+extension Token: TokenGroupIdentifiable {
     var tokenGroupKey: String {
-        let key = self.contract + ":" + String(self.chainId)
+        let key = self.contractAddress.eip55String + ":" + String(self.server.chainID)
         return key.trimmed.lowercased()
     }
+    var isCollectibles: Bool {
+        return self.type == .erc721 || self.type == .erc1155
+    }
+}
+
+extension TokenViewModel: TokenGroupIdentifiable {
+    var tokenGroupKey: String {
+        let key = self.contractAddress.eip55String + ":" + String(self.server.chainID)
+        return key.trimmed.lowercased()
+    }
+
     var isCollectibles: Bool {
         return self.type == .erc721 || self.type == .erc1155
     }
@@ -100,9 +118,14 @@ enum TokenGroup: String {
     case collectibles
 }
 
+protocol TokenGroupIdentifiable {
+    var isCollectibles: Bool { get }
+    var tokenGroupKey: String { get }
+}
+
 protocol TokenGroupIdentifierProtocol {
     static func identifier(fromFileName: String) -> TokenGroupIdentifierProtocol?
-    func identify(tokenObject: TokenObject) -> TokenGroup
+    func identify(token: TokenGroupIdentifiable) -> TokenGroup
 }
 
 class TokenGroupIdentifier: TokenGroupIdentifierProtocol {
@@ -123,11 +146,16 @@ class TokenGroupIdentifier: TokenGroupIdentifierProtocol {
         self.decodedTokenEntries = decodedTokenEntries
     }
 
-    func identify(tokenObject: TokenObject) -> TokenGroup {
-        if tokenObject.isCollectibles {
+    func identify(token: TokenGroupIdentifiable) -> TokenGroup {
+        if token.isCollectibles {
             return .collectibles
         }
-        return decodedTokenEntries[tokenObject.tokenGroupKey] ?? .assets
+        return decodedTokenEntries[token.tokenGroupKey] ?? .assets
     }
 
+}
+
+protocol TokenGroupIdentifieble {
+    var isCollectibles: Bool { get }
+    var tokenGroupKey: String { get }
 }

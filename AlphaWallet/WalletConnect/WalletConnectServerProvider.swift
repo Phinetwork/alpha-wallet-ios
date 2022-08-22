@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import CombineExt
 
 protocol WalletConnectServerProviderType: WalletConnectResponder {
     var sessions: AnyPublisher<[AlphaWallet.WalletConnect.Session], Never> { get }
@@ -14,13 +15,13 @@ protocol WalletConnectServerProviderType: WalletConnectResponder {
     func register(service: WalletConnectServer)
     func connect(url: AlphaWallet.WalletConnect.ConnectionUrl) throws
 
-    func session(forIdentifier identifier: AlphaWallet.WalletConnect.SessionIdentifier) -> AlphaWallet.WalletConnect.Session?
+    func session(for topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) -> AlphaWallet.WalletConnect.Session?
 
-    func updateSession(session: AlphaWallet.WalletConnect.Session, servers: [RPCServer]) throws
-    func reconnectSession(session: AlphaWallet.WalletConnect.Session) throws
-    func disconnectSession(session: AlphaWallet.WalletConnect.Session) throws
+    func update(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl, servers: [RPCServer]) throws
+    func reconnect(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) throws
+    func disconnect(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) throws
     func disconnectSession(sessions: [NFDSession]) throws
-    func hasConnectedSession(session: AlphaWallet.WalletConnect.Session) -> Bool
+    func isConnected(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) -> Bool
 }
 
 class WalletConnectServerProvider: NSObject, WalletConnectServerProviderType {
@@ -29,7 +30,7 @@ class WalletConnectServerProvider: NSObject, WalletConnectServerProviderType {
     @Published private var services: [WalletConnectServer] = []
     private (set) lazy var sessions: AnyPublisher<[AlphaWallet.WalletConnect.Session], Never> = {
         return $services
-            .flatMap { $0.map { $0.sessions }.combineLatest }
+            .flatMap { $0.map { $0.sessions }.combineLatest() }
             .map { $0.flatMap { $0 } }
             .eraseToAnyPublisher()
     }()
@@ -38,8 +39,8 @@ class WalletConnectServerProvider: NSObject, WalletConnectServerProviderType {
         services.append(service)
     }
 
-    func session(forIdentifier identifier: AlphaWallet.WalletConnect.SessionIdentifier) -> AlphaWallet.WalletConnect.Session? {
-        return services.compactMap { $0.session(forIdentifier: identifier) }.first
+    func session(for topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) -> AlphaWallet.WalletConnect.Session? {
+        return services.compactMap { $0.session(for: topicOrUrl) }.first
     }
 
     func respond(_ response: AlphaWallet.WalletConnect.Response, request: AlphaWallet.WalletConnect.Session.Request) throws {
@@ -54,15 +55,15 @@ class WalletConnectServerProvider: NSObject, WalletConnectServerProviderType {
         }
     }
 
-    func updateSession(session: AlphaWallet.WalletConnect.Session, servers: [RPCServer]) throws {
+    func update(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl, servers: [RPCServer]) throws {
         for each in services {
-            try each.updateSession(session: session, servers: servers)
+            try each.update(topicOrUrl, servers: servers)
         }
     }
 
-    func reconnectSession(session: AlphaWallet.WalletConnect.Session) throws {
+    func reconnect(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) throws {
         for each in services {
-            try each.reconnectSession(session: session)
+            try each.reconnect(topicOrUrl)
         }
     }
 
@@ -72,13 +73,13 @@ class WalletConnectServerProvider: NSObject, WalletConnectServerProviderType {
         }
     }
 
-    func disconnectSession(session: AlphaWallet.WalletConnect.Session) throws {
+    func disconnect(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) throws {
         for each in services {
-            try each.disconnectSession(session: session)
+            try each.disconnect(topicOrUrl)
         }
     }
 
-    func hasConnectedSession(session: AlphaWallet.WalletConnect.Session) -> Bool {
-        return services.contains(where: { $0.hasConnectedSession(session: session) })
+    func isConnected(_ topicOrUrl: AlphaWallet.WalletConnect.TopicOrUrl) -> Bool {
+        return services.contains(where: { $0.isConnected(topicOrUrl) })
     }
 }

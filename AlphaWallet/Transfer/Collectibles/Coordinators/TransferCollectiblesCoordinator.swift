@@ -20,17 +20,17 @@ protocol TransferCollectiblesCoordinatorDelegate: CanOpenURL, SendTransactionDel
 
 class TransferCollectiblesCoordinator: Coordinator {
     private lazy var sendViewController: TransferTokenBatchCardsViaWalletAddressViewController = {
-        return makeTransferTokensCardViaWalletAddressViewController(token: tokenObject, tokenHolders: filteredTokenHolders)
+        return makeTransferTokensCardViaWalletAddressViewController(token: token, tokenHolders: filteredTokenHolders)
     }()
     private let keystore: Keystore
-    private let tokenObject: TokenObject
+    private let token: Token
     private let session: WalletSession
     private let assetDefinitionStore: AssetDefinitionStore
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
     private let filteredTokenHolders: [TokenHolder]
     private var transactionConfirmationResult: ConfirmResult? = .none
-    private var lastViewControllerInNavigationStack: UIViewController?
-    
+    private let tokensService: TokenViewModelState
     weak var delegate: TransferCollectiblesCoordinatorDelegate?
     let navigationController: UINavigationController
     var coordinators: [Coordinator] = []
@@ -40,39 +40,35 @@ class TransferCollectiblesCoordinator: Coordinator {
             navigationController: UINavigationController,
             keystore: Keystore,
             filteredTokenHolders: [TokenHolder],
-            tokenObject: TokenObject,
+            token: Token,
             assetDefinitionStore: AssetDefinitionStore,
-            analyticsCoordinator: AnalyticsCoordinator
+            analytics: AnalyticsLogger,
+            domainResolutionService: DomainResolutionServiceType,
+            tokensService: TokenViewModelState
     ) {
+        self.tokensService = tokensService
         self.filteredTokenHolders = filteredTokenHolders
         self.session = session
         self.keystore = keystore
         self.navigationController = navigationController
-        self.tokenObject = tokenObject
+        self.token = token
         self.assetDefinitionStore = assetDefinitionStore
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
         navigationController.navigationBar.isTranslucent = false
-        self.lastViewControllerInNavigationStack = navigationController.viewControllers.last
     }
 
     func start() {
-        sendViewController.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(self, selector: #selector(dismiss))
         sendViewController.navigationItem.largeTitleDisplayMode = .never
         navigationController.pushViewController(sendViewController, animated: true)
     }
 
-    @objc private func dismiss() {
-        removeAllCoordinators()
-
-        delegate?.didCancel(in: self)
-    }
-    
-    private func makeTransferTokensCardViaWalletAddressViewController(token: TokenObject, tokenHolders: [TokenHolder]) -> TransferTokenBatchCardsViaWalletAddressViewController {
-        let viewModel = TransferTokenBatchCardsViaWalletAddressViewControllerViewModel(token: token, tokenHolders: tokenHolders, assetDefinitionStore: assetDefinitionStore)
+    private func makeTransferTokensCardViaWalletAddressViewController(token: Token, tokenHolders: [TokenHolder]) -> TransferTokenBatchCardsViaWalletAddressViewController {
+        let viewModel = TransferTokenBatchCardsViaWalletAddressViewControllerViewModel(token: token, tokenHolders: tokenHolders)
         let tokenCardViewFactory: TokenCardViewFactory = {
-            TokenCardViewFactory(token: token, assetDefinitionStore: assetDefinitionStore, analyticsCoordinator: analyticsCoordinator, keystore: keystore, wallet: session.account)
+            TokenCardViewFactory(token: token, assetDefinitionStore: assetDefinitionStore, analytics: analytics, keystore: keystore, wallet: session.account)
         }()
-        let controller = TransferTokenBatchCardsViaWalletAddressViewController(token: token, viewModel: viewModel, tokenCardViewFactory: tokenCardViewFactory)
+        let controller = TransferTokenBatchCardsViaWalletAddressViewController(token: token, viewModel: viewModel, tokenCardViewFactory: tokenCardViewFactory, domainResolutionService: domainResolutionService)
         controller.configure()
         controller.delegate = self
 
@@ -98,45 +94,55 @@ extension TransferCollectiblesCoordinator: TransferTokenBatchCardsViaWalletAddre
     }
 
     func didEnterWalletAddress(tokenHolders: [TokenHolder], to recipient: AlphaWallet.Address, in viewController: TransferTokenBatchCardsViaWalletAddressViewController) {
+        do {
+            //NOTE: we have to make sure that token holders have the same contract address!
+            guard let firstTokenHolder = tokenHolders.first else { throw TransactionConfiguratorError.impossibleToBuildConfiguration }
 
-        //NOTE: we have to make sure that token holders have the same contract address!
-        guard let firstTokenHolder = tokenHolders.first else { return }
+            let tokenIdsAndValues: [UnconfirmedTransaction.TokenIdAndValue] = tokenHolders
+                .flatMap { $0.selections }
+                .compactMap { .init(tokenId: $0.tokenId, value: BigUInt($0.value)) }
 
-        let tokenIdsAndValues: [UnconfirmedTransaction.TokenIdAndValue] = tokenHolders
-            .flatMap { $0.selections }
-            .compactMap { .init(tokenId: $0.tokenId, value: BigUInt($0.value)) }
-        let tokenInstanceNames = tokenHolders
-            .valuesAll
-            .compactMapValues { $0.nameStringValue }
+            let tokenInstanceNames = tokenHolders
+                .valuesAll
+                .compactMapValues { $0.nameStringValue }
 
-        let transaction = UnconfirmedTransaction(
-            transactionType: .erc1155Token(tokenObject, transferType: tokenIdsAndValues.erc1155TokenTransactionType, tokenHolders: tokenHolders),
-                value: BigInt(0),
-                recipient: recipient,
-                contract: firstTokenHolder.contractAddress,
-                data: nil,
-                tokenIdsAndValues: tokenIdsAndValues
-        )
+            let transaction = UnconfirmedTransaction(
+                transactionType: .erc1155Token(token, transferType: tokenIdsAndValues.erc1155TokenTransactionType, tokenHolders: tokenHolders),
+                    value: BigInt(0),
+                    recipient: recipient,
+                    contract: firstTokenHolder.contractAddress,
+                    data: nil,
+                    tokenIdsAndValues: tokenIdsAndValues
+            )
 
-        let configuration: TransactionConfirmationConfiguration = .sendNftTransaction(confirmType: .signThenSend, keystore: keystore, tokenInstanceNames: tokenInstanceNames)
-        let coordinator = TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: configuration, analyticsCoordinator: analyticsCoordinator)
-        addCoordinator(coordinator)
-        coordinator.delegate = self
-        coordinator.start(fromSource: .sendNft)
+            let configuration: TransactionConfirmationViewModel.Configuration = .sendNftTransaction(confirmType: .signThenSend, tokenInstanceNames: tokenInstanceNames)
+            let coordinator = try TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: configuration, analytics: analytics, domainResolutionService: domainResolutionService, keystore: keystore, assetDefinitionStore: assetDefinitionStore, tokensService: tokensService)
+            addCoordinator(coordinator)
+            coordinator.delegate = self
+            coordinator.start(fromSource: .sendNft)
+        } catch {
+            UIApplication.shared
+                .presentedViewController(or: navigationController)
+                .displayError(message: error.prettyError)
+        }
     }
 
     func openQRCode(in controller: TransferTokenBatchCardsViaWalletAddressViewController) {
         guard navigationController.ensureHasDeviceAuthorization() else { return }
 
-        let coordinator = ScanQRCodeCoordinator(analyticsCoordinator: analyticsCoordinator, navigationController: navigationController, account: session.account)
+        let coordinator = ScanQRCodeCoordinator(analytics: analytics, navigationController: navigationController, account: session.account, domainResolutionService: domainResolutionService)
         coordinator.delegate = self
         addCoordinator(coordinator)
         coordinator.start(fromSource: .addressTextField)
     }
+
+    func didClose(in viewController: TransferTokenBatchCardsViaWalletAddressViewController) {
+        delegate?.didCancel(in: self)
+    }
 }
 
 extension TransferCollectiblesCoordinator: ScanQRCodeCoordinatorDelegate {
-    
+
     func didCancel(in coordinator: ScanQRCodeCoordinator) {
         removeCoordinator(coordinator)
     }
@@ -167,7 +173,7 @@ extension TransferCollectiblesCoordinator: TransactionConfirmationCoordinatorDel
             guard let strongSelf = self else { return }
             strongSelf.removeCoordinator(coordinator)
             strongSelf.transactionConfirmationResult = result
-            
+
             let coordinator = TransactionInProgressCoordinator(presentingViewController: strongSelf.navigationController)
             coordinator.delegate = strongSelf
             strongSelf.addCoordinator(coordinator)
@@ -185,12 +191,7 @@ extension TransferCollectiblesCoordinator: TransactionInProgressCoordinatorDeleg
     func didDismiss(in coordinator: TransactionInProgressCoordinator) {
         removeCoordinator(coordinator)
 
-        switch transactionConfirmationResult {
-        case .some(let result):
-            let _ = lastViewControllerInNavigationStack.flatMap { navigationController.popToViewController($0, animated: true) }
-            delegate?.didFinish(result, in: self)
-        case .none:
-            break
-        }
+        guard case .some(let result) = transactionConfirmationResult else { return }
+        delegate?.didFinish(result, in: self)
     }
 }

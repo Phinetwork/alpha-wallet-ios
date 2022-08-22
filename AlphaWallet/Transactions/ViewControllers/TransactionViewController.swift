@@ -9,13 +9,14 @@ protocol TransactionViewControllerDelegate: class, CanOpenURL {
 }
 
 class TransactionViewController: UIViewController {
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private lazy var viewModel: TransactionDetailsViewModel = {
+        let etherToken: Token = MultipleChainsTokensDataStore.functional.etherToken(forServer: session.server)
         return .init(
             transactionRow: transactionRow,
             chainState: session.chainState,
             wallet: session.account,
-            currencyRate: session.tokenBalanceService.ethBalanceViewModel?.currencyRate
+            currencyRate: service.tokenViewModel(for: etherToken)?.balance.ticker?.rate
         )
     }()
     private let roundedBackground = RoundedBackground()
@@ -23,14 +24,15 @@ class TransactionViewController: UIViewController {
     private let buttonsBar = HorizontalButtonsBar(configuration: .primary(buttons: 1))
     private let session: WalletSession
     private let transactionRow: TransactionRow
-
+    private let service: TokenViewModelState
     weak var delegate: TransactionViewControllerDelegate?
 
-    init(analyticsCoordinator: AnalyticsCoordinator, session: WalletSession, transactionRow: TransactionRow, delegate: TransactionViewControllerDelegate?) {
-        self.analyticsCoordinator = analyticsCoordinator
+    init(analytics: AnalyticsLogger, session: WalletSession, transactionRow: TransactionRow, service: TokenViewModelState, delegate: TransactionViewControllerDelegate?) {
+        self.analytics = analytics
         self.session = session
         self.transactionRow = transactionRow
         self.delegate = delegate
+        self.service = service
 
         super.init(nibName: nil, bundle: nil)
 
@@ -182,6 +184,6 @@ class TransactionViewController: UIViewController {
 // MARK: Analytics
 extension TransactionViewController {
     private func logUse() {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.explorer, properties: [Analytics.Properties.type.rawValue: Analytics.ExplorerType.transaction.rawValue])
+        analytics.log(navigation: Analytics.Navigation.explorer, properties: [Analytics.Properties.type.rawValue: Analytics.ExplorerType.transaction.rawValue])
     }
 }

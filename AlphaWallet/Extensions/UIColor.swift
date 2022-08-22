@@ -19,7 +19,7 @@ extension UIColor {
 
     convenience init(hex: String) {
         let scanner = Scanner(string: hex)
-        scanner.scanLocation = 0
+        scanner.currentIndex = hex.startIndex
 
         var rgbValue: UInt64 = 0
 
@@ -34,5 +34,17 @@ extension UIColor {
             green: CGFloat(g) / 0xff,
             blue: CGFloat(b) / 0xff, alpha: 1
         )
+    }
+
+    var lightMode: UIColor {
+        return resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+    }
+
+    var darkMode: UIColor {
+        return resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+    }
+
+    var isDynamic: Bool {
+        return lightMode != darkMode
     }
 }

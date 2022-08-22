@@ -9,23 +9,12 @@ import UIKit
 import BigInt
 
 struct WalletTokenViewCellViewModel {
-    private let shortFormatter = EtherNumberFormatter.short
-    private let token: TokenObject
-    private let assetDefinitionStore: AssetDefinitionStore
+    private let token: TokenViewModel
     private let isVisible: Bool
-    
-    init(token: TokenObject, assetDefinitionStore: AssetDefinitionStore, isVisible: Bool = true) {
+
+    init(token: TokenViewModel, isVisible: Bool = true) {
         self.token = token
-        self.assetDefinitionStore = assetDefinitionStore
         self.isVisible = isVisible
-    }
-
-    private var title: String {
-        return token.titleInPluralForm(withAssetDefinitionStore: assetDefinitionStore)
-    }
-
-    private var amount: String {
-        return shortFormatter.string(from: token.valueBigInt, decimals: token.decimals)
     }
 
     var cryptoValueAttributedString: NSAttributedString {
@@ -44,7 +33,7 @@ struct WalletTokenViewCellViewModel {
     }
 
     var titleAttributedString: NSAttributedString {
-        return NSAttributedString(string: title, attributes: [
+        return NSAttributedString(string: token.tokenScriptOverrides?.titleInPluralForm ?? "", attributes: [
             .foregroundColor: Screen.TokenCard.Color.title,
             .font: Screen.TokenCard.Font.title
         ])

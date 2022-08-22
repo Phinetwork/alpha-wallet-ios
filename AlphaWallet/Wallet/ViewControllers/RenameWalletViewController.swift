@@ -6,6 +6,8 @@
 //
 
 import UIKit
+import Combine
+import AlphaWalletAddress
 
 protocol RenameWalletViewControllerDelegate: AnyObject {
     func didFinish(in viewController: RenameWalletViewController)
@@ -14,9 +16,7 @@ protocol RenameWalletViewControllerDelegate: AnyObject {
 class RenameWalletViewController: UIViewController {
 
     private let viewModel: RenameWalletViewModel
-    private let analyticsCoordinator: AnalyticsCoordinator
-    private var config: Config
-
+    private var cancelable = Set<AnyCancellable>()
     private lazy var nameTextField: TextField = {
         let textField = TextField()
         textField.label.translatesAutoresizingMaskIntoConstraints = false
@@ -35,10 +35,8 @@ class RenameWalletViewController: UIViewController {
     private let roundedBackground = RoundedBackground()
     weak var delegate: RenameWalletViewControllerDelegate?
 
-    init(viewModel: RenameWalletViewModel, analyticsCoordinator: AnalyticsCoordinator, config: Config) {
+    init(viewModel: RenameWalletViewModel) {
         self.viewModel = viewModel
-        self.analyticsCoordinator = analyticsCoordinator
-        self.config = config
 
         super.init(nibName: nil, bundle: nil)
 
@@ -83,8 +81,7 @@ class RenameWalletViewController: UIViewController {
         nameTextField.configureOnce()
         buttonsBar.buttons[0].addTarget(self, action: #selector(saveWalletNameSelected), for: .touchUpInside)
 
-        configure(viewModel: viewModel)
-        fulfillTextField(account: viewModel.account)
+        bind(viewModel: viewModel)
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapSelected))
         roundedBackground.addGestureRecognizer(tap)
@@ -108,33 +105,24 @@ class RenameWalletViewController: UIViewController {
         return nil
     }
 
-    func configure(viewModel: RenameWalletViewModel) {
+    private func bind(viewModel: RenameWalletViewModel) {
         navigationItem.title = viewModel.title
         nameTextField.label.text = viewModel.walletNameTitle
         buttonsBar.buttons[0].setTitle(viewModel.saveWalletNameTitle, for: .normal)
+
+        viewModel.resolvedEns
+            .assign(to: \.placeholder, on: nameTextField.textField)
+            .store(in: &cancelable)
+
+        viewModel.assignedName
+            .assign(to: \.text, on: nameTextField.textField)
+            .store(in: &cancelable)
     }
 
     @objc private func saveWalletNameSelected(_ sender: UIButton) {
-        let name = nameTextField.value
-
-        if name.isEmpty {
-            config.deleteWalletName(forAccount: viewModel.account)
-        } else {
-            config.saveWalletName(name, forAddress: viewModel.account)
-            analyticsCoordinator.log(action: Analytics.Action.nameWallet)
-        }
+        viewModel.set(walletName: nameTextField.value)
 
         delegate?.didFinish(in: self)
-    }
-
-    private func fulfillTextField(account: AlphaWallet.Address) {
-        let resolver: DomainResolutionServiceType = DomainResolutionService()
-        resolver.resolveEns(address: account).done { resolution in
-            self.nameTextField.textField.placeholder = resolution.resolution.value
-        }.cauterize()
-
-        let walletNames = config.walletNames
-        nameTextField.textField.text = walletNames[account]
     }
 }
 

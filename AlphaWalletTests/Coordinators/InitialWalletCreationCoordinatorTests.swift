@@ -9,8 +9,9 @@ class InitialWalletCreationCoordinatorTests: XCTestCase {
         let coordinator = InitialWalletCreationCoordinator(
             config: .make(),
             navigationController: FakeNavigationController(),
-            keystore: FakeKeystore(),
-            analyticsCoordinator: FakeAnalyticsService()
+            keystore: FakeEtherKeystore(),
+            analytics: FakeAnalyticsService(),
+            domainResolutionService: FakeDomainResolutionService()
         )
 
         coordinator.start()

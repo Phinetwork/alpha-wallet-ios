@@ -8,10 +8,13 @@ import Combine
 struct Config {
     struct Development {
         let shouldReadClipboardForWalletConnectUrl = false
+        let shouldNotSendTransactions = false
         ///Useful to reduce network calls
         let isAutoFetchingDisabled = false
         ///Should only be used to allow users to take paths where the current wallet is real, not watched, e.g sign buttons are enabled. Some of those actions will fail, understandably. Should not display a watch wallet as if it is a real wallet though
-        let shouldPretendIsRealWallet = true
+        let shouldPretendIsRealWallet = false
+        let isOpenSeaFetchingDisabled = false
+        let isRunLoopThreadLoggingEnabled = false
     }
 
     let development = Development()
@@ -317,24 +320,8 @@ extension Config {
         }
     }
 
-    private func setWalletNames(walletNames: [AlphaWallet.Address: String]) {
-        let names = walletNames.map { ($0.key.eip55String, $0.value) }
-        let dictionary = Dictionary(names, uniquingKeysWith: { $1 })
-        defaults.set(dictionary, forKey: Keys.walletNames)
-    }
-
-    func saveWalletName(_ walletName: String, forAddress address: AlphaWallet.Address) {
-        let walletName = walletName.trimmed
-        guard !walletName.isEmpty else { return }
-        var names = walletNames
-        names[address] = walletName
-        setWalletNames(walletNames: names)
-    }
-
-    func deleteWalletName(forAccount address: AlphaWallet.Address) {
-        var names = walletNames
-        names[address] = nil
-        setWalletNames(walletNames: names)
+    func removeAllWalletNames() {
+        defaults.removeObject(forKey: Keys.walletNames)
     }
 }
 

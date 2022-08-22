@@ -8,7 +8,7 @@ struct SetSellTokensCardExpiryDateViewControllerViewModel {
     private let server: RPCServer
     private let assetDefinitionStore: AssetDefinitionStore
 
-    let token: TokenObject
+    let token: Token
     let tokenHolder: TokenHolder
 
     var headerTitle: String {
@@ -49,7 +49,7 @@ struct SetSellTokensCardExpiryDateViewControllerViewModel {
     }
 
     var descriptionLabelFont: UIFont {
-        return Fonts.light(size: 21)
+        return Fonts.regular(size: 21)
     }
 
     var descriptionLabelColor: UIColor {
@@ -94,7 +94,7 @@ struct SetSellTokensCardExpiryDateViewControllerViewModel {
     }
 
     var noteLabelFont: UIFont {
-        return Fonts.light(size: 21)
+        return Fonts.regular(size: 21)
     }
 
     var noteLabelColor: UIColor {
@@ -113,7 +113,7 @@ struct SetSellTokensCardExpiryDateViewControllerViewModel {
         return tokenHolder.count
     }
 
-    init(token: TokenObject, tokenHolder: TokenHolder, ethCost: Ether, server: RPCServer, assetDefinitionStore: AssetDefinitionStore) {
+    init(token: Token, tokenHolder: TokenHolder, ethCost: Ether, server: RPCServer, assetDefinitionStore: AssetDefinitionStore) {
         self.token = token
         self.tokenHolder = tokenHolder
         self.ethCost = ethCost

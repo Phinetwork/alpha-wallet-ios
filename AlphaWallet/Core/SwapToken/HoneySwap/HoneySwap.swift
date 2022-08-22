@@ -17,7 +17,7 @@ class HoneySwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
         return R.string.localizable.aWalletTokenErc20ExchangeHoneyswapButtonTitle()
     }
     //NOTE: While selection on action browser will be automatically switched to defined server `rpcServer`
-    func rpcServer(forToken token: TokenActionsServiceKey) -> RPCServer? {
+    func rpcServer(forToken token: TokenActionsIdentifiable) -> RPCServer? {
         return .xDai
     }
 
@@ -31,7 +31,7 @@ class HoneySwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
     var theme: Theme = .dark
     var method: Method = .swap
 
-    func url(token: TokenActionsServiceKey) -> URL? {
+    func url(token: TokenActionsIdentifiable) -> URL? {
         var components = URLComponents()
         components.path = method.rawValue
         components.queryItems = [
@@ -91,7 +91,7 @@ class HoneySwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
         }
     }
 
-    func actions(token: TokenActionsServiceKey) -> [TokenInstanceAction] {
+    func actions(token: TokenActionsIdentifiable) -> [TokenInstanceAction] {
         return [
             .init(type: .swap(service: self))
         ]
@@ -101,11 +101,11 @@ class HoneySwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
         //no-op
     }
 
-    func isSupport(token: TokenActionsServiceKey) -> Bool {
+    func isSupport(token: TokenActionsIdentifiable) -> Bool {
         switch token.server {
         case .xDai:
             return true
-        case .main, .kovan, .ropsten, .rinkeby, .sokol, .goerli, .artis_sigma1, .artis_tau1, .custom, .poa, .callisto, .classic, .binance_smart_chain, .binance_smart_chain_testnet, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+        case .main, .kovan, .ropsten, .rinkeby, .sokol, .goerli, .artis_sigma1, .artis_tau1, .custom, .poa, .callisto, .classic, .binance_smart_chain, .binance_smart_chain_testnet, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
             return false
         }
     }

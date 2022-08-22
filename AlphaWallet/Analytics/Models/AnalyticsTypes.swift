@@ -36,6 +36,7 @@ enum Analytics {
         case tapBrowserMore = "Screen: Browser More Options"
         case signMessageRequest = "Screen: Sign Message Request"
         case walletConnect = "Screen: WalletConnect"
+        case deepLink = "Screen: DeepLink"
         case faq = "Screen: FAQ"
         case discord = "Screen: Discord"
         case telegramCustomerSupport = "Screen: Telegram: Customer Support"
@@ -76,6 +77,10 @@ enum Analytics {
         case editCustomChain = "Edit Custom Chain"
         case subscribeToEmailNewsletter = "Subscribe Email Newsletter"
         case tapSafariExtensionRewrittenUrl = "Tap Safari Extension Rewritten URL"
+        case deepLinkCancel = "DeepLink Cancel"
+        case deeplinkVisited = "DeepLink Visit"
+        case customUrlSchemeVisited = "Custom URL Scheme Visit"
+        case deepLinkWalletApiCall = "Deep Link Wallet API Call"
     }
 
     //TODO re-evaluate if these should go into the main analytic engine
@@ -86,6 +91,14 @@ enum Analytics {
     //Include "Error" at the end of the String value so it's easier to filter in analytics dashboard
     enum Error: String, AnalyticsError {
         case sendTransactionNonceTooLow = "Send Transaction Nonce Too Low Error"
+    }
+
+    enum WebApiErrors: String, AnalyticsError {
+        case openSeaRateLimited
+        case openSeaInvalidApiKey
+        case openSeaExpiredApiKey
+        case rpcNodeRateLimited
+        case rpcNodeInvalidApiKey
     }
 
     enum Properties: String {
@@ -108,6 +121,14 @@ enum Analytics {
         case addCustomChainType
         case isAccepted
         case reason
+        case domainName
+        case scheme
+    }
+
+    enum EmbeddedDeepLinkType: String, AnalyticsUserProperty {
+        case eip681
+        case walletConnect
+        case others
     }
 
     enum UserProperties: String, AnalyticsUserProperty {
@@ -152,6 +173,8 @@ enum Analytics {
         case claimPaidMagicLink
         case speedupTransaction
         case cancelTransaction
+        case swapApproval
+        case swap
     }
 
     enum TransactionConfirmationSpeedType: String {
@@ -166,11 +189,13 @@ enum Analytics {
         case erc20Transfer
         case erc20Approve
         case nativeCryptoTransfer
+        case swap
         case unknown
     }
 
     enum SignMessageRequestSource: String {
         case dappBrowser
+        case deepLink
         case tokenScript
         case walletConnect
     }

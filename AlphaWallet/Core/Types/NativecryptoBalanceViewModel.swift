@@ -6,35 +6,24 @@
 //
 
 import Foundation
-import BigInt
+import BigInt 
 
-struct NativecryptoBalanceViewModel: BalanceBaseViewModel {
+struct NativecryptoBalanceViewModel: BalanceViewModelType {
+    var ticker: CoinTicker?
+    private let token: BalanceRepresentable
 
-    var isZero: Bool {
-        balance.value.isZero
-    }
-
-    private let server: RPCServer
-    private let balance: BalanceProtocol
-    private (set) var ticker: CoinTicker?
-
-    init(server: RPCServer, balance: BalanceProtocol, ticker: CoinTicker?) {
-        self.server = server
-        self.balance = balance
+    init(token: BalanceRepresentable, ticker: CoinTicker?) {
+        self.token = token
         self.ticker = ticker
     }
-
-    var value: BigInt {
-        balance.value
-    }
-
-    var amount: Double {
-        return EtherNumberFormatter.plain.string(from: balance.value, units: .ether).doubleValue
-    }
+    var balance: [TokenBalanceValue] { return [] }
+    var value: BigInt { token.valueBI }
+    var amount: Double { return EtherNumberFormatter.plain.string(from: token.valueBI, units: .ether).doubleValue }
 
     var amountString: String {
-        guard !isZero else { return "0.00 \(server.symbol)" }
-        return "\(balance.amountFull) \(server.symbol)"
+        guard !isZero else { return "0.00 \(token.server.symbol)" }
+        let balance = EtherNumberFormatter.full.string(from: token.valueBI)
+        return "\(balance) \(token.server.symbol)"
     }
 
     var currencyAmount: String? {
@@ -43,25 +32,15 @@ struct NativecryptoBalanceViewModel: BalanceBaseViewModel {
     }
 
     var currencyAmountWithoutSymbol: Double? {
-        guard let currentRate = cryptoRate(forServer: server) else { return nil }
+        guard let currentRate = cryptoRate(forServer: token.server) else { return nil }
         return amount * currentRate.price
     }
 
-    var amountFull: String {
-        return balance.amountFull
-    }
+    var amountFull: String { return EtherNumberFormatter.plain.string(from: value) }
+    var amountShort: String { return EtherNumberFormatter.short.string(from: value) }
+    var symbol: String { return token.server.symbol }
 
-    var amountShort: String {
-        return balance.amountShort
-    }
-
-    var symbol: String {
-        return server.symbol
-    }
-}
-
-extension BalanceBaseViewModel {
-    func cryptoRate(forServer server: RPCServer) -> Rate? {
+    private func cryptoRate(forServer server: RPCServer) -> Rate? {
         guard let rate = ticker?.rate else { return nil }
         
         let code = mapSymbolToCodeInRates(server)

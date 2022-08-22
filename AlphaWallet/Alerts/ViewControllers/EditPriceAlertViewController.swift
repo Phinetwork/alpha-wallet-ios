@@ -10,6 +10,7 @@ import Combine
 
 protocol EditPriceAlertViewControllerDelegate: class {
     func didUpdateAlert(in viewController: EditPriceAlertViewController)
+    func didClose(in viewController: EditPriceAlertViewController)
 }
 
 class EditPriceAlertViewController: UIViewController {
@@ -22,12 +23,11 @@ class EditPriceAlertViewController: UIViewController {
     }()
 
     private lazy var amountTextField: AmountTextField = {
-        let view = AmountTextField(tokenObject: viewModel.tokenObject)
+        let view = AmountTextField(tokenObject: viewModel.token)
         view.translatesAutoresizingMaskIntoConstraints = false
         view.delegate = self
         view.accessoryButtonTitle = .next
         view.errorState = .none
-
         view.togglePair()
 
         view.isAlternativeAmountEnabled = false
@@ -36,6 +36,7 @@ class EditPriceAlertViewController: UIViewController {
         view.selectCurrencyButton.expandIconHidden = true
         view.statusLabel.text = nil
         view.availableTextHidden = false
+        view.selectCurrencyButton.hasToken = true
 
         return view
     }()
@@ -50,13 +51,14 @@ class EditPriceAlertViewController: UIViewController {
     private let session: WalletSession
     private let alertService: PriceAlertServiceType
     private var cancelable = Set<AnyCancellable>()
-
+    private let tokensService: TokenViewModelState
     weak var delegate: EditPriceAlertViewControllerDelegate?
 
-    init(viewModel: EditPriceAlertViewModel, session: WalletSession, alertService: PriceAlertServiceType) {
+    init(viewModel: EditPriceAlertViewModel, session: WalletSession, tokensService: TokenViewModelState, alertService: PriceAlertServiceType) {
         self.viewModel = viewModel
         self.session = session
         self.alertService = alertService
+        self.tokensService = tokensService
         super.init(nibName: nil, bundle: nil)
 
         let footerBar = ButtonsBarBackgroundView(buttonsBar: buttonsBar, separatorHeight: 0)
@@ -79,33 +81,27 @@ class EditPriceAlertViewController: UIViewController {
         buttonsBar.buttons[0].addTarget(self, action: #selector(saveAlertSelected), for: .touchUpInside)
 
         configure(viewModel: viewModel)
+
         //NOTE: we want to enter only fiat value, as `amountTextField` accepts eth we have to convert it with 1 to 1 rate
         amountTextField.cryptoToDollarRate = 1
         amountTextField.set(ethCost: viewModel.value, useFormatting: false)
 
-        switch viewModel.tokenObject.type {
-        case .nativeCryptocurrency:
-            session.tokenBalanceService
-                .etherToFiatRatePublisher
-                .receive(on: RunLoop.main)
-                .sink { [weak self] price in
-                    guard let strongSelf = self else { return }
+        tokensService.tokenViewModelPublisher(for: viewModel.token)
+            .map { $0?.balance.ticker?.price_usd }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] price in
+                guard let strongSelf = self else { return }
 
-                    strongSelf.viewModel.set(marketPrice: price)
-                    strongSelf.configure(viewModel: strongSelf.viewModel)
-                }.store(in: &cancelable)
-        case .erc20:
-            session.tokenBalanceService
-                .tokenBalancePublisher(viewModel.tokenObject.addressAndRPCServer)
-                .receive(on: RunLoop.main)
-                .sink { [weak self] viewModel in
-                    guard let strongSelf = self else { return }
+                strongSelf.viewModel.set(marketPrice: price)
+                strongSelf.configure(viewModel: strongSelf.viewModel)
+            }.store(in: &cancelable)
+    }
 
-                    strongSelf.viewModel.set(marketPrice: viewModel?.ticker?.price_usd)
-                    strongSelf.configure(viewModel: strongSelf.viewModel)
-                }.store(in: &cancelable)
-        case .erc875, .erc721, .erc721ForTickets, .erc1155:
-            break
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        if isMovingFromParent || isBeingDismissed {
+            delegate?.didClose(in: self)
         }
     }
 
@@ -137,7 +133,7 @@ class EditPriceAlertViewController: UIViewController {
 
         switch viewModel.configuration {
         case .create:
-            let alert: PriceAlert = .init(type: .init(value: value.doubleValue, marketPrice: marketPrice), tokenObject: viewModel.tokenObject, isEnabled: true)
+            let alert: PriceAlert = .init(type: .init(value: value.doubleValue, marketPrice: marketPrice), token: viewModel.token, isEnabled: true)
             alertService.add(alert: alert)
         case .edit(let alert):
             alertService.update(alert: alert, update: .value(value: value.doubleValue, marketPrice: marketPrice))

@@ -9,7 +9,7 @@ class TokenAdaptorTest: XCTestCase {
     func testBundlesAreBrokenIntoContinuousSeatRanges() {
         let date = GeneralisedTime()
         let tokens = [
-            Token(tokenIdOrEvent: .tokenId(tokenId: 1), tokenType: TokenType.erc875, index: UInt16(1), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 1), tokenType: TokenType.erc875, index: UInt16(1), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -19,7 +19,7 @@ class TokenAdaptorTest: XCTestCase {
                 "countryA": .init(directoryString: "Team A"),
                 "countryB": .init(directoryString: "Team B")
             ]),
-            Token(tokenIdOrEvent: .tokenId(tokenId: 2), tokenType: TokenType.erc875, index: UInt16(2), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 2), tokenType: TokenType.erc875, index: UInt16(2), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -29,7 +29,7 @@ class TokenAdaptorTest: XCTestCase {
                 "countryA": .init(directoryString: "Team A"),
                 "countryB": .init(directoryString: "Team B")
             ]),
-            Token(tokenIdOrEvent: .tokenId(tokenId: 3), tokenType: TokenType.erc875, index: UInt16(3), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 3), tokenType: TokenType.erc875, index: UInt16(3), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -41,8 +41,7 @@ class TokenAdaptorTest: XCTestCase {
             ]),
         ]
         let assetDefinitionStore = AssetDefinitionStore()
-        let token = TokenObject()
-        token.contract = Constants.nullAddress.eip55String
+        let token = Token(contract: Constants.nullAddress)
         let bundles = TokenAdaptor(token: token, assetDefinitionStore: assetDefinitionStore, eventsDataStore: FakeEventsDataStore()).bundleTestsOnly(tokens: tokens)
         XCTAssertEqual(bundles.count, 2)
     }
@@ -50,7 +49,7 @@ class TokenAdaptorTest: XCTestCase {
     func testBundlesGroupIdenticalSeatIDsTogether() {
         let date = GeneralisedTime()
         let tokens = [
-            Token(tokenIdOrEvent: .tokenId(tokenId: 1), tokenType: TokenType.erc875, index: UInt16(1), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 1), tokenType: TokenType.erc875, index: UInt16(1), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -60,7 +59,7 @@ class TokenAdaptorTest: XCTestCase {
                 "countryA": .init(directoryString: "Team A"),
                 "countryB": .init(directoryString: "Team B")
             ]),
-            Token(tokenIdOrEvent: .tokenId(tokenId: 2), tokenType: TokenType.erc875, index: UInt16(2), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 2), tokenType: TokenType.erc875, index: UInt16(2), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -70,7 +69,7 @@ class TokenAdaptorTest: XCTestCase {
                 "countryA": .init(directoryString: "Team A"),
                 "countryB": .init(directoryString: "Team B")
             ]),
-            Token(tokenIdOrEvent: .tokenId(tokenId: 3), tokenType: TokenType.erc875, index: UInt16(3), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 3), tokenType: TokenType.erc875, index: UInt16(3), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -80,7 +79,7 @@ class TokenAdaptorTest: XCTestCase {
                 "countryA": .init(directoryString: "Team A"),
                 "countryB": .init(directoryString: "Team B")
             ]),
-            Token(tokenIdOrEvent: .tokenId(tokenId: 4), tokenType: TokenType.erc875, index: UInt16(4), name: "Name", symbol: "SYM", status: .available, values: [
+            TokenScript.Token(tokenIdOrEvent: .tokenId(tokenId: 4), tokenType: TokenType.erc875, index: UInt16(4), name: "Name", symbol: "SYM", status: .available, values: [
                 "city": .init(directoryString: "City"),
                 "venue": .init(directoryString: "Venue"),
                 "match": .init(int: 1),
@@ -92,8 +91,8 @@ class TokenAdaptorTest: XCTestCase {
             ])
         ]
         let assetDefinitionStore = AssetDefinitionStore()
-        let token = TokenObject()
-        token.contract = Constants.nullAddress.eip55String
+        let token = Token(contract: Constants.nullAddress)
+
         let bundles = TokenAdaptor(token: token, assetDefinitionStore: assetDefinitionStore, eventsDataStore: FakeEventsDataStore()).bundleTestsOnly(tokens: tokens)
         XCTAssertEqual(bundles.count, 2)
     }

@@ -9,21 +9,28 @@ import Foundation
 import Combine
 
 final class SwapTokenNativeProvider: SupportedTokenActionsProvider, TokenActionProvider {
+    private let tokenSwapper: TokenSwapper
+
     var objectWillChange: AnyPublisher<Void, Never> {
-        return Empty<Void, Never>(completeImmediately: true).eraseToAnyPublisher()
+        return tokenSwapper.objectWillChange
+            .receive(on: RunLoop.main)
+            .eraseToAnyPublisher()
+    }
+    var action: String { "Native Swap" }
+
+    init(tokenSwapper: TokenSwapper) {
+        self.tokenSwapper = tokenSwapper
     }
 
-    var action: String { "Swap" }
-
-    func isSupport(token: TokenActionsServiceKey) -> Bool {
-        return false
+    func isSupport(token: TokenActionsIdentifiable) -> Bool {
+        return tokenSwapper.supports(contractAddress: token.contractAddress, server: token.server)
     }
 
-    func actions(token: TokenActionsServiceKey) -> [TokenInstanceAction] {
+    func actions(token: TokenActionsIdentifiable) -> [TokenInstanceAction] {
         return [.init(type: .swap(service: self))]
     }
 
     func start() {
-        //no-op
+        tokenSwapper.start()
     }
 }

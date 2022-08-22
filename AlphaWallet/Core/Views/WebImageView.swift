@@ -40,13 +40,24 @@ final class FixedContentModeImageView: UIImageView {
     }
 }
 
-final class WebImageView: UIView {
+final class WebImageView: UIView, ContentBackgroundSupportable {
+
+    private lazy var placeholderImageView: FixedContentModeImageView = {
+        let imageView = FixedContentModeImageView(fixedContentMode: contentMode)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.backgroundColor = backgroundColor
+        imageView.isHidden = true
+        imageView.rounding = .none
+
+        return imageView
+    }()
 
     private lazy var imageView: FixedContentModeImageView = {
         let imageView = FixedContentModeImageView(fixedContentMode: contentMode)
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.contentMode = .scaleAspectFill
-        imageView.backgroundColor = Colors.appBackground
+        imageView.backgroundColor = backgroundColor
 
         return imageView
     }()
@@ -55,7 +66,7 @@ final class WebImageView: UIView {
         let imageView = SvgImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.rounding = rounding
-        imageView.backgroundColor = Colors.appBackground
+        imageView.backgroundColor = backgroundColor
         return imageView
     }()
 
@@ -69,17 +80,24 @@ final class WebImageView: UIView {
         didSet { imageView.rounding = rounding; svgImageView.rounding = rounding; }
     }
 
-    init(placeholder: UIImage? = R.image.tokenPlaceholderLarge(), edgeInsets: UIEdgeInsets = .zero) {
+    var contentBackgroundColor: UIColor? {
+        didSet { imageView.backgroundColor = contentBackgroundColor; }
+    }
+
+    init(edgeInsets: UIEdgeInsets = .zero) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         isUserInteractionEnabled = false
+        backgroundColor = .clear
         clipsToBounds = true
 
         addSubview(imageView)
         addSubview(svgImageView)
+        addSubview(placeholderImageView)
 
         NSLayoutConstraint.activate([
             svgImageView.anchorsConstraint(to: self, edgeInsets: edgeInsets),
+            placeholderImageView.anchorsConstraint(to: self, edgeInsets: edgeInsets),
             imageView.anchorsConstraint(to: self, edgeInsets: edgeInsets)
         ])
     }
@@ -88,32 +106,62 @@ final class WebImageView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func setImage(image: UIImage) {
+    func setImage(image: UIImage?, placeholder: UIImage? = R.image.tokenPlaceholderLarge()) {
+        placeholderImageView.image = placeholder
         svgImageView.alpha = 0
-        imageView.image = image.kf.image(withRadius: .point(rounding.cornerRadius(view: self)), fit: image.size)
+        imageView.image = image
+        placeholderImageView.isHidden = imageView.image != nil
     }
 
     func setImage(url: WebImageURL?, placeholder: UIImage? = R.image.tokenPlaceholderLarge()) {
+        placeholderImageView.image = placeholder
+
         guard let url = url?.url else {
             svgImageView.alpha = 0
-            imageView.image = placeholder
+            imageView.image = nil
+
+            placeholderImageView.isHidden = false
             return
         }
 
         if url.pathExtension == "svg" {
             imageView.image = nil
-            svgImageView.setImage(url: url)
+            placeholderImageView.isHidden = !svgImageView.pageHasLoaded
+            svgImageView.setImage(url: url, completion: { [placeholderImageView] in
+                placeholderImageView.isHidden = true
+            })
         } else {
             svgImageView.alpha = 0
+            placeholderImageView.isHidden = imageView.image != nil
+            //NOTE: not quite sure, but we need to cancel prev loading operation, othervise we receive an error `notCurrentSourceTask`
+            cancel()
 
-            let processor = RoundCornerImageProcessor(cornerRadius: rounding.cornerRadius(view: self))
-            var options: KingfisherOptionsInfo = [.processor(processor)]
+            let size = bounds.size.width.isZero ? CGSize(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.width) : bounds.size
+            let processor = DownsamplingImageProcessor(size: size)
 
-            if let value = placeholder {
-                options.append(.onFailureImage(value))
-            }
+            imageView.kf.setImage(with: url, options: [
+                .processor(processor),
+                .scaleFactor(UIScreen.main.scale),
+                .cacheOriginalImage,
+                .keepCurrentImageWhileLoading,
+                .alsoPrefetchToMemory,
+                .loadDiskFileSynchronously
+            ], completionHandler: { [imageView, placeholderImageView] result in
+                switch result {
+                case .success(let res):
+                    imageView.image = res.image
+                case .failure:
+                    imageView.image = nil
+                }
 
-            imageView.kf.setImage(with: url, placeholder: placeholder, options: options)
+                placeholderImageView.isHidden = imageView.image != nil
+            })
         }
+    }
+
+    func cancel() {
+        svgImageView.stopLoading()
+        imageView.image = nil
+        imageView.kf.cancelDownloadTask()
     }
 }

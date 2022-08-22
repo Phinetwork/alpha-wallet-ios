@@ -1,72 +1,105 @@
 //
 //  Token.swift
-//  Alpha-Wallet
+//  AlphaWallet
 //
-//  Created by Oguzhan Gungor on 2/25/18.
-//  Copyright © 2018 Alpha-Wallet. All rights reserved.
+//  Created by Vladyslav Shepitko on 18.05.2022.
 //
 
 import Foundation
+import AlphaWalletOpenSea
 import BigInt
 
-struct Token: Hashable {
-    static func == (lhs: Token, rhs: Token) -> Bool {
-        return lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-        hasher.combine(tokenIdOrEvent.tokenId)
-        hasher.combine(tokenType)
-        hasher.combine(index)
-        hasher.combine(name)
-        hasher.combine(symbol)
-        hasher.combine(status)
-        hasher.combine(values)
-    }
-
-    enum Status {
-        case available, sold, redeemed, forSale, transferred, pending, availableButDataUnavailable
-    }
-
-    var id: TokenId {
-        tokenIdOrEvent.tokenId
-    }
-    let tokenIdOrEvent: TokenIdOrEvent
-    let tokenType: TokenType
-    let index: UInt16
-    let name: String
+struct Token: Equatable, Hashable {
+    let primaryKey: String
+    let contractAddress: AlphaWallet.Address
     let symbol: String
-    let status: Status
-    let values: [AttributeId: AssetAttributeSyntaxValue]
+    let decimals: Int
+    let server: RPCServer
+    let type: TokenType
+    let name: String
+    let value: BigInt
+    let balance: [TokenBalanceValue]
+    let shouldDisplay: Bool
+    let info: TokenInfo
 
-    var value: Int? {
-        values.valueIntValue.flatMap { String($0) }.flatMap { Int($0) }
+    var addressAndRPCServer: AddressAndRPCServer {
+        return .init(address: contractAddress, server: server)
     }
 
-    static var empty: Token {
-        return Token(
-                tokenIdOrEvent: .tokenId(tokenId: Constants.nullTokenIdBigUInt),
-                tokenType: TokenType.erc875,
-                index: 0,
-                name: R.string.localizable.tokensTitlecase(),
-                symbol: "",
-                status: .available,
-                values: [
-                    "locality": .init(defaultValueWithSyntax: .directoryString),
-                    "venue": .init(defaultValueWithSyntax: .directoryString),
-                    "match": .init(defaultValueWithSyntax: .integer),
-                    "time": .init(defaultValueWithSyntax: .generalisedTime),
-                    "numero": .init(defaultValueWithSyntax: .integer),
-                    "category": .init(defaultValueWithSyntax: .directoryString),
-                    "countryA": .init(defaultValueWithSyntax: .directoryString),
-                    "countryB": .init(defaultValueWithSyntax: .directoryString)
-                ]
-        )
+    var isERC721Or1155AndNotForTickets: Bool {
+        switch type {
+        case .erc721, .erc1155:
+            return true
+        case .nativeCryptocurrency, .erc20, .erc875, .erc721ForTickets:
+            return false
+        }
     }
 
-    //TODO have a better way to test for spawnable meetup contracts
-    var isSpawnableMeetupContract: Bool {
-        return values["expired"] != nil && values["locality"] != nil && values["building"] != nil
+    var valueDecimal: NSDecimalNumber? {
+        let value = EtherNumberFormatter.plain.string(from: value, decimals: decimals)
+        return value.optionalDecimalValue
+    }
+
+    var nonZeroBalance: [TokenBalanceValue] {
+        return Array(balance.filter { isNonZeroBalance($0.balance, tokenType: self.type) })
+    }
+
+    var nftBalanceValue: [NonFungibleFromJson] {
+        balance.compactMap { $0.nonFungibleBalance }
+    }
+
+    init(
+            contract: AlphaWallet.Address = Constants.nullAddress,
+            server: RPCServer = .main,
+            name: String = "",
+            symbol: String = "",
+            decimals: Int = 0,
+            value: BigInt = .zero,
+            isCustom: Bool = false,
+            isDisabled: Bool = false,
+            shouldDisplay: Bool = false,
+            type: TokenType = .erc20,
+            balance: [TokenBalanceValue] = [],
+            sortIndex: Int? = nil
+    ) {
+        self.primaryKey = TokenObject.generatePrimaryKey(fromContract: contract, server: server)
+        self.contractAddress = contract
+        self.server = server
+        self.name = name
+        self.symbol = symbol
+        self.decimals = decimals
+        self.value = value
+        self.type = type
+        self.balance = balance
+        self.shouldDisplay = shouldDisplay
+        self.info = .init(uid: self.primaryKey)
+    }
+
+    init(tokenObject: TokenObject) {
+        name = tokenObject.name
+        primaryKey = tokenObject.primaryKey
+        server = tokenObject.server
+        contractAddress = tokenObject.contractAddress
+        symbol = tokenObject.symbol
+        decimals = tokenObject.decimals
+        type = tokenObject.type
+        shouldDisplay = tokenObject.shouldDisplay
+        value = tokenObject.valueBigInt
+        balance = Array(tokenObject.balance.map { TokenBalanceValue(balance: $0) })
+        info = .init(tokenInfoObject: tokenObject.info)
+    }
+
+    static func == (lhs: Token, rhs: Token) -> Bool {
+        return lhs.primaryKey == rhs.primaryKey
     }
 }
+
+extension Token: TokenScriptSupportable {
+    var valueBI: BigInt { value }
+    var balanceNft: [TokenBalanceValue] { balance }
+}
+extension Token: TokenFilterable { }
+extension Token: TokenSortable { }
+extension Token: TokenActionsIdentifiable { }
+extension Token: BalanceRepresentable { }
+extension Token: TokenIdentifiable { }

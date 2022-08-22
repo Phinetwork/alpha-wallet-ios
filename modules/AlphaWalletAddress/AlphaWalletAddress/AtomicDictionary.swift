@@ -28,8 +28,16 @@ public class AtomicDictionary<Key: Hashable, Value> {
         }
     }
     
-    public init(queue: DispatchQueue = DispatchQueue(label: "org.alphawallet.swift.atomicDictionary", qos: .background)) {
+    public init(queue: DispatchQueue = DispatchQueue(label: "org.alphawallet.swift.atomicDictionary", qos: .background), value: [Key: Value] = [:]) {
         self.queue = queue
+        self.cache = value
+    }
+
+    public func set(value: [Key: Value]) {
+        dispatchPrecondition(condition: .notOnQueue(queue))
+        queue.sync { [unowned self] in
+            self.cache = value
+        }
     }
 
     public func removeAll() {
@@ -48,6 +56,10 @@ public class AtomicDictionary<Key: Hashable, Value> {
         return element
     }
 
+    public var count: Int {
+        return values.count
+    }
+
     public var values: [Key: Value] {
         var elements: [Key: Value] = [:]
         dispatchPrecondition(condition: .notOnQueue(queue))
@@ -57,4 +69,4 @@ public class AtomicDictionary<Key: Hashable, Value> {
 
         return elements
     }
-}
+} 

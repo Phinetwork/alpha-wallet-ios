@@ -416,6 +416,7 @@
 "accounts.delete.error.failedToExportPrivateKey" = "Error al exportar la clave privada";
 "accounts.delete.error.failedToExportSeed" = "Error al exportar la semilla del monedero. Si has migrado a un teléfono nuevo o has restaurado el dispositivo, tienes que volver a importar el monedero";
 "Chain ID" = "ID de cadena";
+"Chain ID with prefix" = "Chain ID: %i";
 "Endpoint" = "Punto final";
 "settings.preferences.button.title" = "Mostrar tokens al iniciar";
 "settings.preferences.title" = "Preferencias";
@@ -471,6 +472,7 @@
 "blockchain.arbitrum.rinkeby" = "Arbitrum Rinkeby";
 "blockchain.palm" = "Palm";
 "blockchain.palm.Testnet" = "Palm (Testnet)";
+"blockchain.phi" = "PHI";
 "photos" = "Explorar";
 "light" = "Luz";
 "qrCode.title" = "Apunta la cámara al código QR";
@@ -597,6 +599,7 @@
 "sendTransaction.error.networkConnectionWasLost" = "The network connection was lost. Please try again";
 "sendTransaction.error.invalidCertificate" = "It seems like there is a problem with the RPC node certificate. Please try again later";
 "sendTransaction.error.requestTimedOut" = "Request has timed out. Please try again";
+"sendTransaction.error.invalidKey" = "Something went wrong when making the request. Please try again later";
 "transactionConfiguration.Type.slow" = "Slow";
 "transactionConfiguration.Type.average" = "Average";
 "transactionConfiguration.Type.fast" = "Fast";
@@ -849,3 +852,9 @@
 "advanced.settings.features.title" = "Features";
 "semifungiblesProjectInfo" = "Project Info";
 "semifungibles.Edcon.description" = "Edcon is a game centered around breedable, collectible, and adorable creatures where digital pandas live in the blockchain! Each panda comes from descendants of 50 giant pandas that have been officially licensed by China Panda Conservation and Research Center.";
+"requester.field.url" = "URL";
+"accept.deepLink.navigationTitle" = "Connect to";
+"accept.deepLink.field.note" = "This will inform them your wallet address is %@";
+"accept.deepLink.field.url.title" = "URL";
+"accept.deepLink.field.note.title" = "Note";
+"accept.walletConnect.field.methods.title" = "Methods";

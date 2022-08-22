@@ -5,33 +5,14 @@ import UIKit
 import BigInt
 
 struct EthTokenViewCellViewModel {
-    private let shortFormatter = EtherNumberFormatter.short
-    private let token: TokenObject
-    private let currencyAmount: Double?
-    private let ticker: CoinTicker?
-    private let assetDefinitionStore: AssetDefinitionStore
+    private let token: TokenViewModel
     private let isVisible: Bool 
+    let accessoryType: UITableViewCell.AccessoryType
     
-    init(
-        token: TokenObject,
-        ticker: CoinTicker?,
-        currencyAmount: Double?,
-        assetDefinitionStore: AssetDefinitionStore,
-        isVisible: Bool = true
-    ) {
+    init(token: TokenViewModel, isVisible: Bool = true, accessoryType: UITableViewCell.AccessoryType = .none) {
         self.token = token
-        self.ticker = ticker
-        self.currencyAmount = currencyAmount
-        self.assetDefinitionStore = assetDefinitionStore
         self.isVisible = isVisible
-    }
-
-    private var amount: String {
-        return shortFormatter.string(from: BigInt(token.value) ?? BigInt(), decimals: token.decimals)
-    }
-
-    private var title: String {
-        return token.shortTitleInPluralForm(withAssetDefinitionStore: assetDefinitionStore)
+        self.accessoryType = accessoryType
     }
 
     var backgroundColor: UIColor {
@@ -39,25 +20,25 @@ struct EthTokenViewCellViewModel {
     }
 
     var contentsBackgroundColor: UIColor {
-        return Screen.TokenCard.Color.background
+        return Configuration.Color.Semantic.tableViewCellBackground
     }
 
     var titleAttributedString: NSAttributedString {
-        return NSAttributedString(string: title, attributes: [
-            .foregroundColor: Screen.TokenCard.Color.title,
+        return NSAttributedString(string: token.tokenScriptOverrides?.shortTitleInPluralForm ?? "", attributes: [
+            .foregroundColor: Configuration.Color.Semantic.defaultForegroundText,
             .font: Screen.TokenCard.Font.title
         ])
     }
 
     var cryptoValueAttributedString: NSAttributedString {
-        return NSAttributedString(string: amount + " " + token.symbolInPluralForm(withAssetDefinitionStore: assetDefinitionStore), attributes: [
-            .foregroundColor: Screen.TokenCard.Color.subtitle,
+        return NSAttributedString(string: token.balance.amountShort + " " + (token.tokenScriptOverrides?.symbolInPluralForm ?? ""), attributes: [
+            .foregroundColor: Configuration.Color.Semantic.defaultSubtitleText,
             .font: Screen.TokenCard.Font.subtitle
         ])
     }
 
     private var valuePercentageChangeColor: UIColor {
-        return Screen.TokenCard.Color.valueChangeValue(ticker: ticker)
+        return Screen.TokenCard.Color.valueChangeValue(ticker: token.balance.ticker)
     }
 
     private var apprecation24hoursBackgroundColor: UIColor {
@@ -65,7 +46,7 @@ struct EthTokenViewCellViewModel {
     }
 
     private var apprecation24hoursImage: UIImage? {
-        switch EthCurrencyHelper(ticker: ticker).change24h {
+        switch EthCurrencyHelper(ticker: token.balance.ticker).change24h {
         case .appreciate:
             return R.image.price_up()
         case .depreciate:
@@ -77,7 +58,7 @@ struct EthTokenViewCellViewModel {
 
     private var apprecation24hoursAttributedString: NSAttributedString {
         let valuePercentageChangeValue: String = {
-            switch EthCurrencyHelper(ticker: ticker).change24h {
+            switch EthCurrencyHelper(ticker: token.balance.ticker).change24h {
             case .appreciate(let percentageChange24h):
                 return "\(percentageChange24h)%"
             case .depreciate(let percentageChange24h):
@@ -98,7 +79,7 @@ struct EthTokenViewCellViewModel {
     }
 
     private var priceChangeUSDValue: String {
-        if let result = EthCurrencyHelper(ticker: ticker).valueChanged24h(value: token.optionalDecimalValue) {
+        if let result = EthCurrencyHelper(ticker: token.balance.ticker).valueChanged24h(value: token.valueDecimal) {
             return Formatter.priceChange.string(from: result) ?? UiTweaks.noPriceMarker
         } else {
             return UiTweaks.noPriceMarker
@@ -116,13 +97,13 @@ struct EthTokenViewCellViewModel {
         if token.server.isTestnet {
             return UiTweaks.noPriceMarker
         } else {
-            return currencyAmount.flatMap { Formatter.fiat.string(from: $0) ?? UiTweaks.noPriceMarker }
+            return token.balance.currencyAmountWithoutSymbol.flatMap { Formatter.fiat.string(from: $0) ?? UiTweaks.noPriceMarker }
         }
     }
 
     var fiatValueAttributedString: NSAttributedString {
         return NSAttributedString(string: amountAccordingRPCServer ?? UiTweaks.noPriceMarker, attributes: [
-            .foregroundColor: Screen.TokenCard.Color.title,
+            .foregroundColor: Configuration.Color.Semantic.defaultForegroundText,
             .font: Screen.TokenCard.Font.valueChangeValue
         ])
     }
@@ -155,7 +136,7 @@ struct EthTokenViewCellViewModel {
     }
 
     private func priceChangeUSDValue(ticker: CoinTicker?) -> String {
-        if let result = EthCurrencyHelper(ticker: ticker).valueChanged24h(value: token.optionalDecimalValue) {
+        if let result = EthCurrencyHelper(ticker: ticker).valueChanged24h(value: token.valueDecimal) {
             return Formatter.usd.string(from: result) ?? "-"
         } else {
             return "-"
@@ -179,5 +160,26 @@ struct EthTokenViewCellViewModel {
 
     private func valuePercentageChangeColor(ticker: CoinTicker?) -> UIColor {
         return Screen.TokenCard.Color.valueChangeValue(ticker: ticker)
+    }
+}
+
+extension EthTokenViewCellViewModel: Hashable {
+    static func == (lhs: EthTokenViewCellViewModel, rhs: EthTokenViewCellViewModel) -> Bool {
+        return lhs.token == rhs.token &&
+            lhs.token.tokenScriptOverrides?.shortTitleInPluralForm == rhs.token.tokenScriptOverrides?.shortTitleInPluralForm &&
+            lhs.token.tokenScriptOverrides?.symbolInPluralForm == rhs.token.tokenScriptOverrides?.symbolInPluralForm &&
+            lhs.token.valueDecimal == rhs.token.valueDecimal &&
+            lhs.token.balance.ticker == rhs.token.balance.ticker
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(isVisible)
+        hasher.combine(accessoryType)
+        hasher.combine(token.contractAddress)
+        hasher.combine(token.server)
+        hasher.combine(token.tokenScriptOverrides?.shortTitleInPluralForm)
+        hasher.combine(token.tokenScriptOverrides?.symbolInPluralForm)
+        hasher.combine(token.valueDecimal)
+        hasher.combine(token.balance.ticker)
     }
 }

@@ -3,58 +3,55 @@
 import Foundation
 import UIKit
 
-class OpenSeaNonFungibleTokenViewCellViewModel {
-    private let token: TokenObject
-    private let assetDefinitionStore: AssetDefinitionStore
-    private let eventsDataStore: NonActivityEventsDataStore
-    private let wallet: Wallet
+struct OpenSeaNonFungibleTokenViewCellViewModel {
+    private let token: TokenViewModel
 
-    private var title: String {
-        if let name = token.titleInPluralForm(withAssetDefinitionStore: assetDefinitionStore, eventsDataStore: eventsDataStore, forWallet: wallet) {
-            return name
-        } else {
-            return token.titleInPluralForm(withAssetDefinitionStore: assetDefinitionStore)
-        }
-    }
-
-    private var amount: String {
-        let actualBalance = token.nonZeroBalance
-        return actualBalance.count.toString()
-    }
-
-    var tickersAmountAttributedString: NSAttributedString {
-        return .init(string: "\(amount) \(token.symbol)", attributes: [
+    var assetsCountAttributedString: NSAttributedString {
+        return .init(string: "\(token.nonZeroBalance.count.toString()) \(token.symbol)", attributes: [
             .font: Fonts.regular(size: 15),
-            .foregroundColor: R.color.dove()!
+            .foregroundColor: Configuration.Color.Semantic.defaultSubtitleText
         ])
     }
 
-    var tickersTitleAttributedString: NSAttributedString {
-        return .init(string: title, attributes: [
+    var titleAttributedString: NSAttributedString {
+        return .init(string: token.tokenScriptOverrides?.titleInPluralForm ?? "", attributes: [
             .font: Fonts.regular(size: 20),
-            .foregroundColor: Colors.appText
+            .foregroundColor: Configuration.Color.Semantic.defaultForegroundText
         ])
     }
     var tokenIcon: Subscribable<TokenImage> {
         token.icon(withSize: .s750)
     }
 
-    init(token: TokenObject, assetDefinitionStore: AssetDefinitionStore, eventsDataStore: NonActivityEventsDataStore, wallet: Wallet) {
-        self.token = token
-        self.assetDefinitionStore = assetDefinitionStore
-        self.eventsDataStore = eventsDataStore
-        self.wallet = wallet
+    init(token: TokenViewModel) {
+        self.token = token 
     }
 
     var backgroundColor: UIColor {
-        return Colors.appBackground
+        return Configuration.Color.Semantic.collectionViewBackground
     }
 
     var contentsBackgroundColor: UIColor {
-        return Colors.appWhite
+        return Configuration.Color.Semantic.defaultViewBackground
     }
 
     var contentsCornerRadius: CGFloat {
         return Metrics.CornerRadius.nftBox
+    }
+}
+
+extension OpenSeaNonFungibleTokenViewCellViewModel: Hashable {
+    static func == (lhs: OpenSeaNonFungibleTokenViewCellViewModel, rhs: OpenSeaNonFungibleTokenViewCellViewModel) -> Bool {
+        return lhs.token == rhs.token &&
+            lhs.token.nonZeroBalance == rhs.token.nonZeroBalance &&
+            lhs.token.tokenScriptOverrides?.titleInPluralForm == rhs.token.tokenScriptOverrides?.titleInPluralForm
+    }
+    
+    //NOTE: We must make sure view models are queal and have same hash value, othervise diffable datasource will cause crash
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(token.contractAddress)
+        hasher.combine(token.server)
+        hasher.combine(token.tokenScriptOverrides?.titleInPluralForm)
+        hasher.combine(token.nonZeroBalance)
     }
 }

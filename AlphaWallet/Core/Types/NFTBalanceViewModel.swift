@@ -6,59 +6,32 @@
 //
 
 import Foundation
-import BigInt
+import BigInt 
 
-struct NFTBalanceViewModel: BalanceBaseViewModel {
-    private let server: RPCServer
-    private let balance: BalanceProtocol
-    private (set) var ticker: CoinTicker?
+struct NFTBalanceViewModel: BalanceViewModelType {
+    var ticker: CoinTicker?
+    private let token: BalanceRepresentable
 
-    init(server: RPCServer, balance: BalanceProtocol, ticker: CoinTicker?) {
-        self.server = server
-        self.balance = balance
+    init(token: BalanceRepresentable, ticker: CoinTicker?) {
+        self.token = token
         self.ticker = ticker
     }
 
-    var value: BigInt {
-        balance.value
+    var balance: [TokenBalanceValue] {
+        return token.balanceNft
     }
 
-    var amount: Double {
-        return EtherNumberFormatter.plain.string(from: balance.value).doubleValue
-    }
+    var value: BigInt { return token.valueBI }
+    var amount: Double { return Double(nonZeroBalance) }
+    var amountString: String { return "\(nonZeroBalance) \(token.symbol)" }
+    var currencyAmount: String? { return nil }
+    var currencyAmountWithoutSymbol: Double? { return nil }
+    var amountFull: String { return "\(nonZeroBalance)" }
+    var amountShort: String { return "\(nonZeroBalance)" }
+    var symbol: String { return token.symbol }
 
-    var amountString: String {
-        guard !isZero else { return "0.00 \(server.symbol)" }
-        return "\(balance.amountFull) \(server.symbol)"
-    }
-
-    var currencyAmount: String? {
-        guard let totalAmount = currencyAmountWithoutSymbol else { return nil }
-        return Formatter.usd.string(from: totalAmount)
-    }
-
-    var currencyAmountWithoutSymbol: Double? {
-        guard let ticker = ticker else { return nil }
-        let rate = ticker.rate
-        let symbol = mapSymbolToVersionInRates(ticker.symbol.lowercased())
-        guard let currentRate = (rate.rates.filter { $0.code == symbol }.first), currentRate.price > 0, amount > 0 else { return nil }
-        return amount * currentRate.price
-    }
-
-    var amountFull: String {
-        return balance.amountFull
-    }
-
-    var amountShort: String {
-        return balance.amountShort
-    }
-
-    var symbol: String {
-        return server.symbol
-    }
-
-    private func mapSymbolToVersionInRates(_ symbol: String) -> String {
-        let mapping = ["xdai": "dai"]
-        return mapping[symbol] ?? symbol
+    private var nonZeroBalance: Int {
+        let actualBalance = Array(token.balanceNft.filter { isNonZeroBalance($0.balance, tokenType: token.type) })
+        return actualBalance.count
     }
 }

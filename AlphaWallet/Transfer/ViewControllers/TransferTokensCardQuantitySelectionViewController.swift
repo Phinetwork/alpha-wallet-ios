@@ -3,7 +3,7 @@
 import UIKit
 
 protocol TransferTokenCardQuantitySelectionViewControllerDelegate: class, CanOpenURL {
-    func didSelectQuantity(token: TokenObject, tokenHolder: TokenHolder, in viewController: TransferTokensCardQuantitySelectionViewController)
+    func didSelectQuantity(token: Token, tokenHolder: TokenHolder, in viewController: TransferTokensCardQuantitySelectionViewController)
     func didPressViewInfo(in viewController: TransferTokensCardQuantitySelectionViewController)
 }
 
@@ -15,7 +15,7 @@ class TransferTokensCardQuantitySelectionViewController: UIViewController, Token
     private let tokenRowView: TokenRowView & UIView
     private let buttonsBar = HorizontalButtonsBar(configuration: .primary(buttons: 1))
     private var viewModel: TransferTokensCardQuantitySelectionViewModel
-    private let token: TokenObject
+    private let token: Token
 
     var contract: AlphaWallet.Address {
         return token.contractAddress
@@ -24,20 +24,20 @@ class TransferTokensCardQuantitySelectionViewController: UIViewController, Token
         return token.server
     }
     let assetDefinitionStore: AssetDefinitionStore
-    let analyticsCoordinator: AnalyticsCoordinator
+    let analytics: AnalyticsLogger
     let paymentFlow: PaymentFlow
     weak var delegate: TransferTokenCardQuantitySelectionViewControllerDelegate?
 
     init(
-            analyticsCoordinator: AnalyticsCoordinator,
+            analytics: AnalyticsLogger,
             paymentFlow: PaymentFlow,
-            token: TokenObject,
+            token: Token,
             viewModel: TransferTokensCardQuantitySelectionViewModel,
             assetDefinitionStore: AssetDefinitionStore,
             keystore: Keystore,
             wallet: Wallet
     ) {
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
         self.paymentFlow = paymentFlow
         self.token = token
         self.viewModel = viewModel
@@ -48,7 +48,7 @@ class TransferTokensCardQuantitySelectionViewController: UIViewController, Token
         case .backedByOpenSea:
             tokenRowView = OpenSeaNonFungibleTokenCardRowView(tokenView: .viewIconified)
         case .notBackedByOpenSea:
-            tokenRowView = TokenCardRowView(analyticsCoordinator: analyticsCoordinator, server: token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: wallet)
+            tokenRowView = TokenCardRowView(analytics: analytics, server: token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: wallet)
         }
 
         super.init(nibName: nil, bundle: nil)

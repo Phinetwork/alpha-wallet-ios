@@ -6,7 +6,8 @@
 //
 
 import Foundation
-import PromiseKit
+import Combine
+import AlphaWalletCore
 
 enum AddressOrEnsResolution {
     case invalidInput
@@ -25,25 +26,16 @@ enum AddressOrEnsResolution {
 typealias BlockieAndAddressOrEnsResolution = (image: BlockiesImage?, resolution: AddressOrEnsResolution)
 
 protocol DomainResolutionServiceType {
-    func resolveAddress(string value: String) -> Promise<BlockieAndAddressOrEnsResolution>
-    func resolveEns(address: AlphaWallet.Address) -> Promise<BlockieAndAddressOrEnsResolution>
+    func resolveAddress(string value: String) -> AnyPublisher<AlphaWallet.Address, PromiseError>
+    func resolveEns(address: AlphaWallet.Address) -> AnyPublisher<EnsName, PromiseError>
+    func resolveEnsAndBlockie(address: AlphaWallet.Address) -> AnyPublisher<BlockieAndAddressOrEnsResolution, PromiseError>
+    func resolveAddressAndBlockie(string: String) -> AnyPublisher<BlockieAndAddressOrEnsResolution, PromiseError>
 }
 
 protocol CachebleAddressResolutionServiceType {
-    func cachedAddressValue(forName name: String) -> AlphaWallet.Address?
+    func cachedAddressValue(for name: String) -> AlphaWallet.Address?
 }
 
 protocol CachedEnsResolutionServiceType {
-    func cachedEnsValue(forAddress address: AlphaWallet.Address) -> String?
-}
-
-struct ENSLookupKey: Hashable {
-    let nameOrAddress: String
-    let server: RPCServer
-
-    init(nameOrAddress: String, server: RPCServer) {
-        //Lowercase for case-insensitive lookups
-        self.nameOrAddress = nameOrAddress.lowercased()
-        self.server = server
-    }
-}
+    func cachedEnsValue(for address: AlphaWallet.Address) -> String?
+} 

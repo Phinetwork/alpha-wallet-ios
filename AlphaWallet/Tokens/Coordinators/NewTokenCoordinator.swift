@@ -5,14 +5,14 @@
 //  Created by Vladyslav Shepitko on 20.07.2020.
 //
 
-import UIKit 
+import UIKit
 import PromiseKit
 
 private struct NoContractDetailsDetected: Error {
 }
 
 protocol NewTokenCoordinatorDelegate: AnyObject {
-    func coordinator(_ coordinator: NewTokenCoordinator, didAddToken token: TokenObject)
+    func coordinator(_ coordinator: NewTokenCoordinator, didAddToken token: Token)
     func didClose(in coordinator: NewTokenCoordinator)
 }
 
@@ -29,23 +29,23 @@ class NewTokenCoordinator: Coordinator {
         }
     }
     private var addressToAutoDetectServerFor: AlphaWallet.Address?
-    private let singleChainTokenCoordinators: [SingleChainTokenCoordinator]
+    private let importToken: ImportToken
     private let config: Config
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
     private let navigationController: UINavigationController
-    private lazy var viewController: NewTokenViewController = .init(server: serverToAddCustomTokenOn, initialState: initialState)
+    private lazy var viewController: NewTokenViewController = .init(server: serverToAddCustomTokenOn, domainResolutionService: domainResolutionService, initialState: initialState)
     private let initialState: NewTokenInitialState
-    private let sessions: ServerDictionary<WalletSession>
     var coordinators: [Coordinator] = []
     weak var delegate: NewTokenCoordinatorDelegate?
 
-    init(analyticsCoordinator: AnalyticsCoordinator, navigationController: UINavigationController, config: Config, singleChainTokenCoordinators: [SingleChainTokenCoordinator], initialState: NewTokenInitialState = .empty, sessions: ServerDictionary<WalletSession>) {
+    init(analytics: AnalyticsLogger, navigationController: UINavigationController, config: Config, importToken: ImportToken, initialState: NewTokenInitialState = .empty, domainResolutionService: DomainResolutionServiceType) {
         self.config = config
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
         self.navigationController = navigationController
-        self.singleChainTokenCoordinators = singleChainTokenCoordinators
+        self.importToken = importToken
         self.initialState = initialState
-        self.sessions = sessions
+        self.domainResolutionService = domainResolutionService
     }
 
     func start() {
@@ -55,10 +55,6 @@ class NewTokenCoordinator: Coordinator {
 
     @objc private func dismiss() {
         navigationController.popViewController(animated: true)
-    }
-
-    private func singleChainTokenCoordinator(forServer server: RPCServer) -> SingleChainTokenCoordinator? {
-        singleChainTokenCoordinators.first { $0.isServer(server) }
     }
 
     private func showServers(inViewController viewController: UIViewController) {
@@ -101,8 +97,7 @@ extension NewTokenCoordinator: NewTokenViewControllerDelegate {
     }
 
     func didAddToken(token: ERCToken, in viewController: NewTokenViewController) {
-        guard let coordinator = singleChainTokenCoordinator(forServer: token.server) else { return }
-        let token = coordinator.add(token: token)
+        let token = importToken.importToken(token: token)
 
         delegate?.coordinator(self, didAddToken: token)
         dismiss()
@@ -137,9 +132,8 @@ extension NewTokenCoordinator: NewTokenViewControllerDelegate {
     }
 
     private func fetchContractDataPromise(forServer server: RPCServer, address: AlphaWallet.Address, inViewController viewController: NewTokenViewController) -> Promise<TokenType> {
-        guard let coordinator = singleChainTokenCoordinator(forServer: server) else { return .init { _ in } }
         return Promise { seal in
-            coordinator.fetchContractData(for: address) { [weak self] (data) in
+            importToken.fetchContractData(for: address, server: server) { [weak self] (data) in
                 guard let strongSelf = self else { return }
                 guard strongSelf.addressToAutoDetectServerFor == address else { return }
                 switch data {
@@ -148,7 +142,7 @@ extension NewTokenCoordinator: NewTokenViewControllerDelegate {
                 case .nonFungibleTokenComplete(let name, let symbol, let balance, let tokenType):
                     viewController.updateNameValue(name)
                     viewController.updateSymbolValue(symbol)
-                    viewController.updateBalanceValue(balance, tokenType: tokenType)
+                    viewController.updateBalanceValue(balance.rawValue, tokenType: tokenType)
                     seal.fulfill(tokenType)
                 case .fungibleTokenComplete(let name, let symbol, let decimals):
                     viewController.updateNameValue(name)
@@ -165,15 +159,14 @@ extension NewTokenCoordinator: NewTokenViewControllerDelegate {
     }
 
     private func fetchContractData(forServer server: RPCServer, address: AlphaWallet.Address, inViewController viewController: NewTokenViewController) {
-        guard let coordinator = singleChainTokenCoordinator(forServer: server) else { return }
-        coordinator.fetchContractData(for: address) { data in
+        importToken.fetchContractData(for: address, server: server) { data in
             switch data {
             case .name(let name):
                 viewController.updateNameValue(name)
             case .symbol(let symbol):
                 viewController.updateSymbolValue(symbol)
             case .balance(let balance, let tokenType):
-                viewController.updateBalanceValue(balance, tokenType: tokenType)
+                viewController.updateBalanceValue(balance.rawValue, tokenType: tokenType)
             case .decimals(let decimals):
                 viewController.updateDecimalsValue(decimals)
             case .nonFungibleTokenComplete(_, _, _, let tokenType):
@@ -195,8 +188,7 @@ extension NewTokenCoordinator: NewTokenViewControllerDelegate {
     func openQRCode(in controller: NewTokenViewController) {
         guard let nc = controller.navigationController, nc.ensureHasDeviceAuthorization() else { return }
 
-        let account = sessions.anyValue.account
-        let coordinator = ScanQRCodeCoordinator(analyticsCoordinator: analyticsCoordinator, navigationController: navigationController, account: account)
+        let coordinator = ScanQRCodeCoordinator(analytics: analytics, navigationController: navigationController, account: importToken.wallet, domainResolutionService: domainResolutionService)
         coordinator.delegate = self
         addCoordinator(coordinator)
 

@@ -9,30 +9,37 @@ import UIKit
 import WebKit
 import Kingfisher
 
+private let svgImageViewSharedConfiguration: WKWebViewConfiguration = {
+    let preferences = WKPreferences()
+    preferences.javaScriptEnabled = false
+    let configuration = WKWebViewConfiguration()
+    configuration.preferences = preferences
+
+    return configuration
+}()
+
 final class SvgImageView: WKWebView {
     private var pendingLoadWebViewOperation: BlockOperation?
-
+    private (set) var pageHasLoaded: Bool = false
     var rounding: ViewRounding = .none
 
-    init() {
-        let preferences = WKPreferences()
-        preferences.javaScriptEnabled = false
-        let configuration = WKWebViewConfiguration()
-        configuration.preferences = preferences
-
-        super.init(frame: .zero, configuration: configuration)
+    init() { 
+        //NOTE: set initial frame to avoid `[ViewportSizing] maximumViewportInset cannot be larger than frame`
+        super.init(frame: .init(x: 0, y: 0, width: 40, height: 40), configuration: svgImageViewSharedConfiguration)
 
         translatesAutoresizingMaskIntoConstraints = false
         isUserInteractionEnabled = false
         scrollView.isScrollEnabled = false
         contentMode = .scaleAspectFit
         clipsToBounds = true
+        navigationDelegate = self
     }
 
-    func setImage(url: URL) {
+    func setImage(url: URL, completion: @escaping () -> Void) {
         if let data = try? ImageCache.default.diskStorage.value(forKey: url.absoluteString), let svgString = data.flatMap({ String(data: $0, encoding: .utf8) }) {
-            alpha = 1
             loadHTMLString(html(svgString: svgString), baseURL: nil)
+            alpha = 1
+            completion()
         } else {
             alpha = 0
 
@@ -45,6 +52,7 @@ final class SvgImageView: WKWebView {
                     let op = BlockOperation {
                         self.loadHTMLString(self.html(svgString: svgString), baseURL: nil)
                         self.alpha = 1
+                        completion()
                     }
                     self.pendingLoadWebViewOperation = op
 
@@ -73,6 +81,17 @@ final class SvgImageView: WKWebView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+}
+
+// MARK: WKWebView
+extension SvgImageView: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        pageHasLoaded = false
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageHasLoaded = true
     }
 }
 
@@ -111,11 +130,11 @@ extension SvgImageView {
                         height: inherit;
                         max-width: 100%;
                         max-height: 100%;
-                        border-radius: \(Int(rounding.cornerRadius(view: self)))px;
+                        border-radius: \(Int(rounding.cornerRadius2(view: self)))px;
                     }
 
                     div > * {
-                        border-radius: \(Int(rounding.cornerRadius(view: self)))px;
+                        border-radius: \(Int(rounding.cornerRadius2(view: self)))px;
                     }
                 </style>
             </head>

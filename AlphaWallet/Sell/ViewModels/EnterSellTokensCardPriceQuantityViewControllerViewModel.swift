@@ -7,8 +7,8 @@ struct EnterSellTokensCardPriceQuantityViewControllerViewModel {
     private let server: RPCServer
     private let assetDefinitionStore: AssetDefinitionStore
 
-    lazy var ethToken: TokenObject = MultipleChainsTokensDataStore.functional.token(forServer: server)
-    let token: TokenObject
+    lazy var ethToken: Token = MultipleChainsTokensDataStore.functional.token(forServer: server)
+    let token: Token
     let tokenHolder: TokenHolder
     var ethCost: Ether = .zero
     var dollarCost: String = ""
@@ -56,7 +56,7 @@ struct EnterSellTokensCardPriceQuantityViewControllerViewModel {
     }
 
     var ethCostLabelLabelFont: UIFont {
-        return Fonts.light(size: 21)
+        return Fonts.regular(size: 21)
     }
 
     var ethCostLabelLabelColor: UIColor {
@@ -92,7 +92,7 @@ struct EnterSellTokensCardPriceQuantityViewControllerViewModel {
     }
 
     var dollarCostLabelFont: UIFont {
-        return Fonts.light(size: 21)
+        return Fonts.regular(size: 21)
     }
 
     var dollarCostLabelBackgroundColor: UIColor {
@@ -103,7 +103,7 @@ struct EnterSellTokensCardPriceQuantityViewControllerViewModel {
         return dollarCost.trimmed.isEmpty
     }
 
-    init(token: TokenObject, tokenHolder: TokenHolder, server: RPCServer, assetDefinitionStore: AssetDefinitionStore) {
+    init(token: Token, tokenHolder: TokenHolder, server: RPCServer, assetDefinitionStore: AssetDefinitionStore) {
         self.token = token
         self.tokenHolder = tokenHolder
         self.server = server

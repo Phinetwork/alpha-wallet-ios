@@ -17,7 +17,7 @@ struct QuickSwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
         return R.string.localizable.aWalletTokenErc20ExchangeOnQuickSwapButtonTitle()
     }
 
-    func rpcServer(forToken token: TokenActionsServiceKey) -> RPCServer? {
+    func rpcServer(forToken token: TokenActionsIdentifiable) -> RPCServer? {
         return .polygon
     }
 
@@ -31,7 +31,7 @@ struct QuickSwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
     var theme: Uniswap.Theme = .dark
     var method: Method = .swap
 
-    func url(token: TokenActionsServiceKey) -> URL? {
+    func url(token: TokenActionsIdentifiable) -> URL? {
         let input = Input.input(token.contractAddress)
         var components = URLComponents()
         components.path = method.rawValue
@@ -96,17 +96,17 @@ struct QuickSwap: SupportedTokenActionsProvider, SwapTokenViaUrlProvider {
         }
     }
 
-    func actions(token: TokenActionsServiceKey) -> [TokenInstanceAction] {
+    func actions(token: TokenActionsIdentifiable) -> [TokenInstanceAction] {
         return [
             .init(type: .swap(service: self))
         ]
     }
 
-    func isSupport(token: TokenActionsServiceKey) -> Bool {
+    func isSupport(token: TokenActionsIdentifiable) -> Bool {
         switch token.server {
         case .polygon:
             return true
-        case .main, .kovan, .ropsten, .rinkeby, .poa, .sokol, .classic, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .heco, .heco_testnet, .custom, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .xDai, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+        case .main, .kovan, .ropsten, .rinkeby, .poa, .sokol, .classic, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .heco, .heco_testnet, .custom, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .xDai, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
             return false
         }
     }

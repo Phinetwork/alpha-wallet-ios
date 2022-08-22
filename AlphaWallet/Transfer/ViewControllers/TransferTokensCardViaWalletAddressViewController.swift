@@ -6,17 +6,19 @@ protocol TransferTokensCardViaWalletAddressViewControllerDelegate: class, CanOpe
     func didEnterWalletAddress(tokenHolder: TokenHolder, to recipient: AlphaWallet.Address, paymentFlow: PaymentFlow, in viewController: TransferTokensCardViaWalletAddressViewController)
     func didPressViewInfo(in viewController: TransferTokensCardViaWalletAddressViewController)
     func openQRCode(in controller: TransferTokensCardViaWalletAddressViewController)
+    func didClose(in viewController: TransferTokensCardViaWalletAddressViewController)
 }
 
 class TransferTokensCardViaWalletAddressViewController: UIViewController, TokenVerifiableStatusViewController {
-    private let analyticsCoordinator: AnalyticsCoordinator
-    private let token: TokenObject
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
+    private let token: Token
     private let roundedBackground = RoundedBackground()
     private let header = TokensCardViewControllerTitleHeader()
     private let scrollView = UIScrollView()
     private let tokenRowView: TokenRowView & UIView
     private let targetAddressLabel = UILabel()
-    private let targetAddressTextField = AddressTextField()
+    lazy private var targetAddressTextField = AddressTextField(domainResolutionService: domainResolutionService)
     private let buttonsBar = HorizontalButtonsBar(configuration: .primary(buttons: 1))
     private (set) var viewModel: TransferTokensCardViaWalletAddressViewControllerViewModel
     private var tokenHolder: TokenHolder
@@ -32,8 +34,9 @@ class TransferTokensCardViaWalletAddressViewController: UIViewController, TokenV
     weak var delegate: TransferTokensCardViaWalletAddressViewControllerDelegate?
 
     // swiftlint:disable function_body_length
-    init(analyticsCoordinator: AnalyticsCoordinator, token: TokenObject, tokenHolder: TokenHolder, paymentFlow: PaymentFlow, viewModel: TransferTokensCardViaWalletAddressViewControllerViewModel, assetDefinitionStore: AssetDefinitionStore, keystore: Keystore, session: WalletSession) {
-        self.analyticsCoordinator = analyticsCoordinator
+    init(analytics: AnalyticsLogger, domainResolutionService: DomainResolutionServiceType, token: Token, tokenHolder: TokenHolder, paymentFlow: PaymentFlow, viewModel: TransferTokensCardViaWalletAddressViewControllerViewModel, assetDefinitionStore: AssetDefinitionStore, keystore: Keystore, session: WalletSession) {
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
         self.token = token
         self.tokenHolder = tokenHolder
         self.paymentFlow = paymentFlow
@@ -45,7 +48,7 @@ class TransferTokensCardViaWalletAddressViewController: UIViewController, TokenV
         case .backedByOpenSea:
             tokenRowView = OpenSeaNonFungibleTokenCardRowView(tokenView: .viewIconified)
         case .notBackedByOpenSea:
-            tokenRowView = TokenCardRowView(analyticsCoordinator: analyticsCoordinator, server: token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: session.account)
+            tokenRowView = TokenCardRowView(analytics: analytics, server: token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: session.account)
         }
 
         super.init(nibName: nil, bundle: nil)
@@ -207,6 +210,12 @@ class TransferTokensCardViaWalletAddressViewController: UIViewController, TokenV
         if !isExternalKeyboard || !isEnteringEditModeWithExternalKeyboard {
             scrollView.contentInset.bottom = 0
         }
+    }
+}
+
+extension TransferTokensCardViaWalletAddressViewController: PopNotifiable {
+    func didPopViewController(animated: Bool) {
+        delegate?.didClose(in: self)
     }
 }
 

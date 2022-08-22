@@ -12,7 +12,17 @@ import Result
 import SwiftyJSON
 
 public typealias ChainId = Int
-public typealias OpenSeaNonFungiblesToAddress = [AlphaWallet.Address: [OpenSeaNonFungible]]
+public typealias OpenSeaAddressesToNonFungibles = [AlphaWallet.Address: [OpenSeaNonFungible]]
+
+public protocol OpenSeaDelegate: class {
+    func openSeaError(error: OpenSeaApiError)
+}
+
+public enum OpenSeaApiError: Error {
+    case rateLimited
+    case invalidApiKey
+    case expiredApiKey
+}
 
 public class OpenSea {
     public static var isLoggingEnabled = false
@@ -32,12 +42,14 @@ public class OpenSea {
 
     private var apiKeys: [ChainId: String]
 
+    weak public var delegate: OpenSeaDelegate?
+
     public init(apiKeys: [ChainId: String], queue: DispatchQueue) {
         self.apiKeys = apiKeys
         self.queue = queue
     }
 
-    public func fetchAssetsPromise(address owner: AlphaWallet.Address, chainId: ChainId, excludeContracts: [(AlphaWallet.Address, ChainId)]) -> Promise<Response<OpenSeaNonFungiblesToAddress>> {
+    public func fetchAssetsPromise(address owner: AlphaWallet.Address, chainId: ChainId, excludeContracts: [(AlphaWallet.Address, ChainId)]) -> Promise<Response<OpenSeaAddressesToNonFungibles>> {
         let offset = 0
         //NOTE: some of OpenSea collections have an empty `primary_asset_contracts` array, so we are not able to identifyto each asset connection relates. it solves with `slug` field for collection. We match assets `slug` with collections `slug` values for identification
         func findCollection(address: AlphaWallet.Address, asset: OpenSeaNonFungible, collections: [CollectionKey: AlphaWalletOpenSea.Collection]) -> AlphaWalletOpenSea.Collection? {
@@ -46,13 +58,13 @@ public class OpenSea {
 
         //NOTE: Due to OpenSea's policy of sending requests, (we are not able to sent multiple requests, the request trottled, and 1 sec delay is needed)
         //to send a new one. First we send fetch assets requests and then fetch collections requests
-        typealias OpenSeaAssetsAndCollections = (OpenSeaNonFungiblesToAddress, [CollectionKey: AlphaWalletOpenSea.Collection])
+        typealias OpenSeaAssetsAndCollections = (OpenSeaAddressesToNonFungibles, [CollectionKey: AlphaWalletOpenSea.Collection])
 
         let assetsPromise = fetchAssetsPage(forOwner: owner, chainId: chainId, offset: offset, excludeContracts: excludeContracts)
         let collectionsPromise = fetchCollectionsPage(forOwner: owner, chainId: chainId, offset: offset)
 
         return when(resolved: [assetsPromise.asVoid(), collectionsPromise.asVoid()])
-                .map(on: queue, { _ -> Response<OpenSeaNonFungiblesToAddress> in
+                .map(on: queue, { _ -> Response<OpenSeaAddressesToNonFungibles> in
                     let assets = assetsPromise.result?.optionalValue ?? .init(hasError: true, result: [:])
                     let collections = collectionsPromise.result?.optionalValue ?? .init(hasError: true, result: [:])
 
@@ -72,7 +84,7 @@ public class OpenSea {
 
                     return .init(hasError: hasError, result: result)
                 })
-                .recover({ _ -> Promise<Response<OpenSeaNonFungiblesToAddress>> in
+                .recover({ _ -> Promise<Response<OpenSeaAddressesToNonFungibles>> in
                     return .value(.init(hasError: true, result: [:]))
                 })
     }
@@ -147,11 +159,6 @@ public class OpenSea {
     }
 
     private func performRequestWithRetry(chainId: ChainId, url: URL, maximumRetryCount: Int = 3, delayMultiplayer: Int = 5, retryDelay: DispatchTimeInterval = .seconds(2), queue: DispatchQueue) -> Promise<JSON> {
-        enum OpenSeaApiError: Error {
-            case rateLimited
-            case invalidApiKey
-        }
-
         func privatePerformRequest(url: URL) -> Promise<(HTTPURLResponse, JSON)> {
             var headers: [String: String] = .init()
             headers["X-API-KEY"] = openSeaKey(forChainId: chainId)
@@ -163,7 +170,11 @@ public class OpenSea {
                         if let response: HTTPURLResponse = response.response {
                             let statusCode = response.statusCode
                             if statusCode == 401 {
-                                throw OpenSeaApiError.invalidApiKey
+                                if let body = String(data: data, encoding: .utf8), body.contains("Expired API key") {
+                                    throw OpenSeaApiError.expiredApiKey
+                                } else {
+                                    throw OpenSeaApiError.invalidApiKey
+                                }
                             } else if statusCode == 429 {
                                 throw OpenSeaApiError.rateLimited
                             }
@@ -175,7 +186,14 @@ public class OpenSea {
                         } else {
                             throw AnyError(OpenSeaError(localizedDescription: "Error calling \(url)"))
                         }
-                    })
+                    }).recover { error -> Promise<(HTTPURLResponse, JSON)> in
+                        if let error = error as? OpenSeaApiError {
+                            self.delegate?.openSeaError(error: error)
+                        } else {
+                            //no-op
+                        }
+                        throw error
+                    }
         }
 
         let delayUpperRangeValueFrom0To: Int = delayMultiplayer
@@ -197,7 +215,7 @@ public class OpenSea {
         }
     }
 
-    private func fetchAssetsPage(forOwner owner: AlphaWallet.Address, chainId: ChainId, offset: Int, assets: OpenSeaNonFungiblesToAddress = [:], excludeContracts: [(AlphaWallet.Address, ChainId)]) -> Promise<Response<OpenSeaNonFungiblesToAddress>> {
+    private func fetchAssetsPage(forOwner owner: AlphaWallet.Address, chainId: ChainId, offset: Int, assets: OpenSeaAddressesToNonFungibles = [:], excludeContracts: [(AlphaWallet.Address, ChainId)]) -> Promise<Response<OpenSeaAddressesToNonFungibles>> {
         let baseURL = getBaseURLForOpenSea(forChainId: chainId)
         //Careful to `order_by` with a valid value otherwise OpenSea will return 0 results
         guard let url = URL(string: "\(baseURL)api/v1/assets/?owner=\(owner.eip55String)&order_by=pk&order_direction=asc&limit=50&offset=\(offset)") else {
@@ -206,7 +224,7 @@ public class OpenSea {
 
         return firstly {
             performRequestWithRetry(chainId: chainId, url: url, queue: queue)
-        }.then({ [weak self] json -> Promise<Response<OpenSeaNonFungiblesToAddress>> in
+        }.then({ [weak self] json -> Promise<Response<OpenSeaAddressesToNonFungibles>> in
             guard let strongSelf = self else { return .init(error: PMKError.cancelled) }
             let results = OpenSeaAssetDecoder.decode(json: json, assets: assets)
             let fetchedCount = json["assets"].count
@@ -219,7 +237,7 @@ public class OpenSea {
                 }
                 return .value(.init(hasError: false, result: assetsExcluding))
             }
-        }).recover { _ -> Promise<Response<OpenSeaNonFungiblesToAddress>> in
+        }).recover { _ -> Promise<Response<OpenSeaAddressesToNonFungibles>> in
             //NOTE: return some already fetched amount
             let excludeContracts = excludeContracts.map { $0.0 }
             let assetsExcluding = assets.filter { eachAsset in

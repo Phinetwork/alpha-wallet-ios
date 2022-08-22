@@ -12,6 +12,11 @@ import APIKit
 import JSONRPCKit
 
 final class GasPriceEstimator {
+    private let analytics: AnalyticsLogger
+
+    init(analytics: AnalyticsLogger) {
+        self.analytics = analytics
+    }
 
     func shouldUseEstimatedGasPrice(_ estimatedGasPrice: BigInt, forTransaction transaction: UnconfirmedTransaction) -> Bool {
         //Gas price may be specified in the transaction object, and it will be if we are trying to speedup or cancel a transaction. The replacement transaction will be automatically assigned a slightly higher gas price. We don't want to override that with what we fetch back from gas price estimate if the estimate is lower
@@ -30,7 +35,7 @@ final class GasPriceEstimator {
             switch server {
             case .xDai:
                 return estimateGasPriceForXDai()
-            case .main, .kovan, .ropsten, .rinkeby, .poa, .sokol, .classic, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+            case .main, .kovan, .ropsten, .rinkeby, .poa, .sokol, .classic, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
                 return estimateGasPriceForUseRpcNode(server: server)
             }
         }
@@ -41,7 +46,7 @@ final class GasPriceEstimator {
         case .xDai:
             //xdai transactions are always 1 gwei in gasPrice
             return GasPriceConfiguration.xDaiGasPrice
-        case .main, .kovan, .ropsten, .rinkeby, .poa, .sokol, .classic, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+        case .main, .kovan, .ropsten, .rinkeby, .poa, .sokol, .classic, .callisto, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
             let maxPrice: BigInt = GasPriceConfiguration.maxPrice(forServer: server)
             let defaultPrice: BigInt = GasPriceConfiguration.defaultPrice(forServer: server)
             if let gasPrice = transaction.gasPrice, gasPrice > 0 {
@@ -57,7 +62,7 @@ final class GasPriceEstimator {
         return firstly {
             EtherscanGasPriceEstimator().fetch(server: server)
         }.get { estimates in
-            infoLog("Estimated gas price with gas price estimator API: \(estimates)")
+            infoLog("Estimated gas price with gas price estimator API server: \(server) estimate: \(estimates)")
         }.map { estimates in
             GasEstimates(standard: BigInt(estimates.standard), others: [
                 TransactionConfigurationType.slow: BigInt(estimates.slow),
@@ -78,14 +83,16 @@ final class GasPriceEstimator {
         let defaultPrice: BigInt = GasPriceConfiguration.defaultPrice(forServer: server)
 
         return firstly {
-            Session.send(request)
+            Session.send(request, server: server, analytics: analytics)
+        }.get { estimate in
+            infoLog("Estimated gas price with RPC node server: \(server) estimate: \(estimate)")
         }.map {
             if let gasPrice = BigInt($0.drop0x, radix: 16) {
                 if (gasPrice + GasPriceConfiguration.oneGwei) > maxPrice {
                     // Guard against really high prices
                     return GasEstimates(standard: maxPrice)
                 } else {
-                    if server.canUserChangeGas {
+                    if server.canUserChangeGas && server.shouldAddBufferWhenEstimatingGasPrice {
                         //Add an extra gwei because the estimate is sometimes too low
                         return GasEstimates(standard: gasPrice + GasPriceConfiguration.oneGwei)
                     } else {

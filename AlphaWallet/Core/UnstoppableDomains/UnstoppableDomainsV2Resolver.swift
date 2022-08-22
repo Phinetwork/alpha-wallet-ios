@@ -6,9 +6,11 @@
 //
 
 import Foundation
-import PromiseKit
+import Combine
 import Alamofire
 import SwiftyJSON
+import AlphaWalletENS
+import AlphaWalletCore
 
 struct UnstoppableDomainsV2ApiError: Error {
     var localizedDescription: String
@@ -16,109 +18,120 @@ struct UnstoppableDomainsV2ApiError: Error {
 
 class UnstoppableDomainsV2Resolver {
     private let server: RPCServer
-    private static var addressesCache: [ENSLookupKey: AlphaWallet.Address] = [:]
-    private static var domainsCache: [ENSLookupKey: String] = [:]
+    private let storage: EnsRecordsStorage
 
-    init(server: RPCServer) {
+    init(server: RPCServer, storage: EnsRecordsStorage) {
         self.server = server
+        self.storage = storage
     }
 
-    private static func cachedAddress(forName name: String, server: RPCServer) -> AlphaWallet.Address? {
-        return UnstoppableDomainsV2Resolver.addressesCache[ENSLookupKey(nameOrAddress: name, server: server)]
-    }
-
-    private static func cache(forName name: String, address: AlphaWallet.Address, server: RPCServer) {
-        UnstoppableDomainsV2Resolver.addressesCache[ENSLookupKey(nameOrAddress: name, server: server)] = address
-    }
-
-    private static func cachedDomain(forAddress address: AlphaWallet.Address, server: RPCServer) -> String? {
-        return UnstoppableDomainsV2Resolver.domainsCache[ENSLookupKey(nameOrAddress: address.eip55String, server: server)]
-    }
-
-    private static func cache(forAddress address: AlphaWallet.Address, domain: String, server: RPCServer) {
-        UnstoppableDomainsV2Resolver.domainsCache[ENSLookupKey(nameOrAddress: address.eip55String, server: server)] = domain
-    }
-
-    func resolveAddress(forName name: String) -> Promise<AlphaWallet.Address> {
+    func resolveAddress(forName name: String) -> AnyPublisher<AlphaWallet.Address, PromiseError> {
         if let value = AlphaWallet.Address(string: name) {
-            return .value(value)
+            return .just(value)
         }
 
-        let server = server
-        if let value = UnstoppableDomainsV2Resolver.cachedAddress(forName: name, server: server) {
-            return .value(value)
+        if let value = self.cachedAddressValue(for: name) {
+            return .just(value)
         }
 
         let baseURL = Constants.unstoppableDomainsV2API
         guard let url = URL(string: "\(baseURL)/domains/\(name)") else {
-            return .init(error: UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)"))
+            let error = UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
+
+            return .fail(.some(error: error))
         }
 
-        verboseLog("[UnstoppableDomains] resolving name: \(name)…")
-        return Alamofire
-            .request(url, method: .get, headers: ["Authorization": Constants.Credentials.unstoppableDomainsV2ApiKey])
-            .responseJSON(queue: .main, options: .allowFragments).map { response -> AlphaWallet.Address in
-                guard let data = response.response.data, let json = try? JSON(data: data) else {
-                    throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
-                }
+        return Just(name)
+            .setFailureType(to: PromiseError.self)
+            .flatMap { name -> AnyPublisher<AlphaWallet.Address, PromiseError> in
+                verboseLog("[UnstoppableDomains] resolving name: \(name)…")
+                return Alamofire
+                    .request(url, method: .get, headers: ["Authorization": Constants.Credentials.unstoppableDomainsV2ApiKey])
+                    .responseDataPublisher().tryMap { response -> AlphaWallet.Address in
+                        guard let data = response.response.data, let json = try? JSON(data: data) else {
+                            throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
+                        }
 
-                let value = try AddressResolution.Response(json: json)
-                if let owner = value.meta.owner {
-                    verboseLog("[UnstoppableDomains] resolved name: \(name) result: \(owner.eip55String)")
-                    return owner
-                } else {
-                    throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
-                }
-            }.get { address in
-                UnstoppableDomainsV2Resolver.cache(forName: name, address: address, server: server)
-            }
+                        let value = try AddressResolution.Response(json: json)
+                        if let owner = value.meta.owner {
+                            verboseLog("[UnstoppableDomains] resolved name: \(name) result: \(owner.eip55String)")
+                            return owner
+                        } else {
+                            throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
+                        }
+                    }.handleEvents(receiveOutput: { address in
+                        let key = EnsLookupKey(nameOrAddress: name, server: self.server)
+                        self.storage.addOrUpdate(record: .init(key: key, value: .address(address)))
+                    }).mapError { PromiseError.some(error: $0) }
+                    .share()
+                    .eraseToAnyPublisher()
+            }.eraseToAnyPublisher()
     }
 
-    func resolveDomain(address: AlphaWallet.Address) -> Promise<String> {
-        let server = server
-        if let value = UnstoppableDomainsV2Resolver.cachedDomain(forAddress: address, server: server) {
-            return .value(value)
+    func resolveDomain(address: AlphaWallet.Address) -> AnyPublisher<String, PromiseError> {
+        if let value = self.cachedEnsValue(for: address) {
+            return .just(value)
         }
 
         let baseURL = Constants.unstoppableDomainsV2API
         guard let url = URL(string: "\(baseURL)/domains/?owners=\(address.eip55String)&sortBy=id&sortDirection=DESC&perPage=50") else {
-            return .init(error: UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)"))
+            let error = UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
+
+            return .fail(.some(error: error))
         }
 
-        verboseLog("[UnstoppableDomains] resolving address: \(address.eip55String)…")
-        return Alamofire
-            .request(url, method: .get, headers: ["Authorization": Constants.Credentials.unstoppableDomainsV2ApiKey])
-            .responseJSON(queue: .main, options: .allowFragments).map { response -> String in
-                guard let data = response.response.data, let json = try? JSON(data: data) else {
-                    throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
-                }
+        return Just(address)
+            .setFailureType(to: PromiseError.self)
+            .flatMap { address -> AnyPublisher<String, PromiseError> in
+                verboseLog("[UnstoppableDomains] resolving address: \(address.eip55String)…")
+                return Alamofire
+                    .request(url, method: .get, headers: ["Authorization": Constants.Credentials.unstoppableDomainsV2ApiKey])
+                    .responseDataPublisher().tryMap { response -> String in
+                        guard let data = response.response.data, let json = try? JSON(data: data) else {
+                            throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
+                        }
 
-                let value = try DomainResolution.Response(json: json)
-                if let record = value.data.first {
-                    verboseLog("[UnstoppableDomains] resolved address: \(address.eip55String) result: \(record.id)")
-                    return record.id
-                } else {
-                    throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
-                }
-            }.get { domain in
-                UnstoppableDomainsV2Resolver.cache(forAddress: address, domain: domain, server: server)
-            }
+                        let value = try DomainResolution.Response(json: json)
+                        if let record = value.data.first {
+                            verboseLog("[UnstoppableDomains] resolved address: \(address.eip55String) result: \(record.id)")
+                            return record.id
+                        } else {
+                            throw UnstoppableDomainsV2ApiError(localizedDescription: "Error calling \(baseURL) API isMainThread: \(Thread.isMainThread)")
+                        }
+                    }.handleEvents(receiveOutput: { domain in
+                        let key = EnsLookupKey(nameOrAddress: address.eip55String, server: self.server)
+                        self.storage.addOrUpdate(record: .init(key: key, value: .ens(domain)))
+                    }).mapError { PromiseError.some(error: $0) }
+                    .share()
+                    .eraseToAnyPublisher()
+            }.eraseToAnyPublisher()
     }
 }
 
 extension UnstoppableDomainsV2Resolver: CachebleAddressResolutionServiceType {
 
-    func cachedAddressValue(forName name: String) -> AlphaWallet.Address? {
-        return UnstoppableDomainsV2Resolver.cachedAddress(forName: name, server: server)
+    func cachedAddressValue(for name: String) -> AlphaWallet.Address? {
+        let key = EnsLookupKey(nameOrAddress: name, server: server)
+        switch storage.record(for: key, expirationTime: Constants.Ens.recordExpiration)?.value {
+        case .address(let address):
+            return address
+        case .record, .ens, .none:
+            return nil
+        }
     }
 }
 
 extension UnstoppableDomainsV2Resolver: CachedEnsResolutionServiceType {
 
-    func cachedEnsValue(forAddress address: AlphaWallet.Address) -> String? {
-        return UnstoppableDomainsV2Resolver.cachedDomain(forAddress: address, server: server)
+    func cachedEnsValue(for address: AlphaWallet.Address) -> String? {
+        let key = EnsLookupKey(nameOrAddress: address.eip55String, server: server)
+        switch storage.record(for: key, expirationTime: Constants.Ens.recordExpiration)?.value {
+        case .ens(let ens):
+            return ens
+        case .record, .address, .none:
+            return nil
+        }
     }
-
 }
 
 extension UnstoppableDomainsV2Resolver {

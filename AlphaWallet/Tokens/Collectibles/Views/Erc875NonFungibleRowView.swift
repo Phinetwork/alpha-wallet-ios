@@ -7,7 +7,6 @@
 
 import UIKit
 
-//Very similar to NonFungibleRowView below, but keeping around to render FIFA tickets because some attributes are hardcoded
 class Erc875NonFungibleRowView: TokenCardViewType {
     private let titleLabel = UILabel()
     private let descriptionLabel = UILabel()
@@ -24,7 +23,7 @@ class Erc875NonFungibleRowView: TokenCardViewType {
     }()
 
     private lazy var tokenCardWebView: TokenCardWebView = {
-        return TokenCardWebView(analyticsCoordinator: analyticsCoordinator, server: server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: wallet)
+        return TokenCardWebView(analytics: analytics, server: token.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: wallet)
     }()
 
     private var tokenIconImageView: TokenImageView = {
@@ -45,23 +44,21 @@ class Erc875NonFungibleRowView: TokenCardViewType {
     private var imageSmallSizeContraints: [NSLayoutConstraint] = []
     private var imageLargeSizeContraints: [NSLayoutConstraint] = []
     private let tokenType: OpenSeaBackedNonFungibleTokenHandling
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private let keystore: Keystore
     private let assetDefinitionStore: AssetDefinitionStore
     private let wallet: Wallet
-    private let server: RPCServer
-    private let token: TokenObject
+    private let token: Token
 
-    init(token: TokenObject, tokenType: OpenSeaBackedNonFungibleTokenHandling, analyticsCoordinator: AnalyticsCoordinator, keystore: Keystore, assetDefinitionStore: AssetDefinitionStore, wallet: Wallet, server: RPCServer, layout: GridOrListSelectionState, gridEdgeInsets: UIEdgeInsets = .zero, listEdgeInsets: UIEdgeInsets = .init(top: 0, left: 16, bottom: 0, right: 16)) {
+    init(token: Token, tokenType: OpenSeaBackedNonFungibleTokenHandling, analytics: AnalyticsLogger, keystore: Keystore, assetDefinitionStore: AssetDefinitionStore, wallet: Wallet, layout: GridOrListSelectionState, gridEdgeInsets: UIEdgeInsets = .zero, listEdgeInsets: UIEdgeInsets = .init(top: 0, left: 16, bottom: 0, right: 16)) {
         self.gridEdgeInsets = gridEdgeInsets
         self.listEdgeInsets = listEdgeInsets
         self.tokenType = tokenType
 
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
         self.keystore = keystore
         self.assetDefinitionStore = assetDefinitionStore
         self.wallet = wallet
-        self.server = server
         self.token = token
         super.init(frame: .zero)
 
@@ -109,9 +106,7 @@ class Erc875NonFungibleRowView: TokenCardViewType {
     private var listEdgeInsets: UIEdgeInsets
 
     func configureLayout(layout: GridOrListSelectionState) {
-        for each in subviews {
-            each.removeFromSuperview()
-        }
+        for each in subviews { each.removeFromSuperview() }
         NSLayoutConstraint.deactivate(_constraints)
 
         switch layout {
@@ -187,9 +182,9 @@ class Erc875NonFungibleRowView: TokenCardViewType {
         tokenIconImageView.subscribable = token.icon(withSize: .s300)
     }
 
-    func configure(tokenHolder: TokenHolder, tokenId: TokenId, tokenView: TokenView, assetDefinitionStore: AssetDefinitionStore) {
-        configure(viewModel: Erc875NonFungibleRowViewModel(tokenHolder: tokenHolder, tokenId: tokenId, tokenView: tokenView, assetDefinitionStore: assetDefinitionStore))
+    func configure(tokenHolder: TokenHolder, tokenId: TokenId) {
+        configure(viewModel: Erc875NonFungibleRowViewModel(tokenHolder: tokenHolder, tokenId: tokenId))
 
-        tokenCardWebView.configure(tokenHolder: tokenHolder, tokenId: tokenId, tokenView: tokenView, assetDefinitionStore: assetDefinitionStore)
+        tokenCardWebView.configure(tokenHolder: tokenHolder, tokenId: tokenId)
     }
 }

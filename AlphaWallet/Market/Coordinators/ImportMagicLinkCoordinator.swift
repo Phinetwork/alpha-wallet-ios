@@ -3,14 +3,14 @@
 import Foundation
 import Alamofire
 import BigInt
-import PromiseKit 
+import PromiseKit
 import web3swift
 import Combine
 
 protocol ImportMagicLinkCoordinatorDelegate: class, CanOpenURL {
 	func viewControllerForPresenting(in coordinator: ImportMagicLinkCoordinator) -> UIViewController?
 	func completed(in coordinator: ImportMagicLinkCoordinator)
-    func importPaidSignedOrder(signedOrder: SignedOrder, tokenObject: TokenObject, inViewController viewController: ImportMagicTokenViewController, completion: @escaping (Bool) -> Void)
+    func importPaidSignedOrder(signedOrder: SignedOrder, token: Token, inViewController viewController: ImportMagicTokenViewController, completion: @escaping (Bool) -> Void)
     func didImported(contract: AlphaWallet.Address, in coordinator: ImportMagicLinkCoordinator)
 }
 
@@ -18,13 +18,11 @@ protocol ImportMagicLinkCoordinatorDelegate: class, CanOpenURL {
 class ImportMagicLinkCoordinator: Coordinator {
     private enum TransactionType {
         case freeTransfer(query: String, parameters: Parameters)
-        case paid(signedOrder: SignedOrder, tokenObject: TokenObject)
+        case paid(signedOrder: SignedOrder, token: Token)
     }
 
-    private let analyticsCoordinator: AnalyticsCoordinator
-    private var wallet: Wallet {
-        sessions.anyValue.account
-    }
+    private let analytics: AnalyticsLogger
+    private var wallet: Wallet { session.account }
     private let config: Config
 	private var importTokenViewController: ImportMagicTokenViewController?
     private var hasCompleted = false
@@ -36,7 +34,6 @@ class ImportMagicLinkCoordinator: Coordinator {
     private var isShowingImportUserInterface: Bool {
         return delegate?.viewControllerForPresenting(in: self) != nil
     }
-    private let tokensDataStore: TokensDataStore
     private let assetDefinitionStore: AssetDefinitionStore
     private let url: URL
     private let keystore: Keystore
@@ -55,24 +52,23 @@ class ImportMagicLinkCoordinator: Coordinator {
     }
 
     var coordinators: [Coordinator] = []
-    let server: RPCServer
+    var server: RPCServer { return session.server }
+
     weak var delegate: ImportMagicLinkCoordinatorDelegate?
-    private let tokenBalanceService: TokenBalanceService
+    private let tokensService: TokenViewModelState & TokenProvidable
     private var cryptoToFiatRateWhenHandlePaidImportCancelable: AnyCancellable?
     private var cryptoToFiatRateWhenNotEnoughEthForPaidImportCancelable: AnyCancellable?
     private var balanceWhenHandlePaidImportsCancelable: AnyCancellable?
-    private let sessions: ServerDictionary<WalletSession>
+    private let session: WalletSession
 
-    init(analyticsCoordinator: AnalyticsCoordinator, sessions: ServerDictionary<WalletSession>, config: Config, tokensDatastore: TokensDataStore, assetDefinitionStore: AssetDefinitionStore, url: URL, server: RPCServer, keystore: Keystore) {
-        self.analyticsCoordinator = analyticsCoordinator
-        self.sessions = sessions
+    init(analytics: AnalyticsLogger, session: WalletSession, config: Config, assetDefinitionStore: AssetDefinitionStore, url: URL, keystore: Keystore, tokensService: TokenViewModelState & TokenProvidable) {
+        self.analytics = analytics
+        self.session = session
         self.config = config
-        self.tokensDataStore = tokensDatastore
         self.assetDefinitionStore = assetDefinitionStore
         self.url = url
-        self.server = server
         self.keystore = keystore
-        self.tokenBalanceService = sessions[server].tokenBalanceService
+        self.tokensService = tokensService
     }
 
     func start(url: URL) -> Bool {
@@ -142,27 +138,26 @@ class ImportMagicLinkCoordinator: Coordinator {
 
         //TODO we might not need to pass a TokenObject. Maybe something simpler? Especially since name and symbol is unused
         //TODO: not always ERC875
-        let tokenObject = TokenObject(
+        let token = Token(
                 contract: signedOrder.order.contractAddress,
                 server: server,
                 name: "",
                 symbol: "",
                 decimals: 0,
-                value: signedOrder.order.price.description,
+                value: BigInt(signedOrder.order.price),
                 isCustom: true,
                 isDisabled: false,
                 type: .erc875
         )
-        transactionType = .paid(signedOrder: signedOrder, tokenObject: tokenObject)
+        transactionType = .paid(signedOrder: signedOrder, token: token)
 
         let ethCost = convert(ethCost: signedOrder.order.price)
         promptImportUniversalLink(cost: .paid(eth: ethCost, dollar: nil))
 
         cryptoToFiatRateWhenHandlePaidImportCancelable?.cancel()
-        cryptoToFiatRateWhenHandlePaidImportCancelable = tokenBalanceService
-            .etherToFiatRatePublisher
-            .compactMap { $0 }
-            .receive(on: RunLoop.main)
+        let etherToken: Token = MultipleChainsTokensDataStore.functional.etherToken(forServer: server)
+        cryptoToFiatRateWhenHandlePaidImportCancelable = tokensService.tokenViewModelPublisher(for: etherToken)
+            .compactMap { $0?.balance.ticker?.price_usd }
             .sink { [weak self] price in
                 guard let celf = self else { return }
 
@@ -244,7 +239,7 @@ class ImportMagicLinkCoordinator: Coordinator {
             amt = 0
         }
         count = amt
-        let token = Token(
+        let token = TokenScript.Token(
                 tokenIdOrEvent: .tokenId(tokenId: 0),
                 tokenType: TokenType.nativeCryptocurrency,
                 index: 0,
@@ -389,7 +384,7 @@ class ImportMagicLinkCoordinator: Coordinator {
         let vString = "0" + String(vInt)
         let signature = "0x" + signedOrder.signature.drop0x.substring(to: 128) + vString
         let nodeURL = server.rpcURL
-        let provider = Web3HttpProvider(nodeURL, network: server.web3Network)!
+        let provider = Web3HttpProvider(nodeURL, headers: server.rpcHeaders, network: server.web3Network)!
         let web3Instance = web3swift.web3(provider: provider)
 
         return web3swift.web3.Personal(provider: web3Instance.provider, web3: web3Instance).ecrecover(
@@ -399,20 +394,20 @@ class ImportMagicLinkCoordinator: Coordinator {
     }
 
     private func handlePaidImports(signedOrder: SignedOrder) {
-        balanceWhenHandlePaidImportsCancelable = tokenBalanceService
-            .etherBalance
+        let etherToken: Token = MultipleChainsTokensDataStore.functional.etherToken(forServer: server)
+        balanceWhenHandlePaidImportsCancelable = tokensService.tokenViewModelPublisher(for: etherToken)
+            .compactMap { $0?.balance.value }
             .first()
-            .receive(on: RunLoop.main)
-            .sink { [weak self] viewModel in
-                guard let celf = self, let viewModel = viewModel else { return }
+            .sink { [weak self] balance in
+                guard let celf = self else { return }
 
-                if viewModel.value > signedOrder.order.price {
+                if balance > signedOrder.order.price {
                     celf.handlePaidImportsImpl(signedOrder: signedOrder)
                 } else {
                     celf.notEnoughEthForPaidImport(signedOrder: signedOrder)
                 }
                 celf.balanceWhenHandlePaidImportsCancelable?.cancel()
-            } 
+            }
     }
 
     private func notEnoughEthForPaidImport(signedOrder: SignedOrder) {
@@ -420,11 +415,11 @@ class ImportMagicLinkCoordinator: Coordinator {
         switch server {
         case .xDai:
             errorMessage = R.string.localizable.aClaimTokenFailedNotEnoughXDAITitle()
-        case .classic, .main, .poa, .callisto, .kovan, .ropsten, .rinkeby, .sokol, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet:
+        case .classic, .main, .poa, .callisto, .kovan, .ropsten, .rinkeby, .sokol, .goerli, .artis_sigma1, .artis_tau1, .binance_smart_chain, .binance_smart_chain_testnet, .custom, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnCypress, .klaytnBaobabTestnet, .phi, .ioTeX, .ioTeXTestnet:
             errorMessage = R.string.localizable.aClaimTokenFailedNotEnoughEthTitle()
         }
-
-        if tokenBalanceService.etherToFiatRate == nil {
+        let etherToken: Token = MultipleChainsTokensDataStore.functional.etherToken(forServer: server)
+        if tokensService.tokenViewModel(for: etherToken).flatMap({ $0.balance.ticker?.price_usd }) == nil {
             let ethCost = convert(ethCost: signedOrder.order.price)
             showImportError(
                 errorMessage: errorMessage,
@@ -432,10 +427,9 @@ class ImportMagicLinkCoordinator: Coordinator {
             )
         }
         cryptoToFiatRateWhenNotEnoughEthForPaidImportCancelable?.cancel()
-        cryptoToFiatRateWhenNotEnoughEthForPaidImportCancelable = tokenBalanceService
-            .etherToFiatRatePublisher
-            .compactMap { $0 }
-            .receive(on: RunLoop.main)
+
+        cryptoToFiatRateWhenNotEnoughEthForPaidImportCancelable = tokensService.tokenViewModelPublisher(for: etherToken)
+            .compactMap { $0?.balance.ticker?.price_usd }
             .sink { [weak self] price in
                 guard let celf = self else { return }
 
@@ -470,11 +464,11 @@ class ImportMagicLinkCoordinator: Coordinator {
         return filteredTokens
     }
     private lazy var tokenProvider: TokenProviderType = {
-        return TokenProvider(account: wallet, server: server)
+        return TokenProvider(account: wallet, server: server, analytics: analytics)
     }()
 
     private func makeTokenHolder(_ bytes32Tokens: [String], _ contractAddress: AlphaWallet.Address) {
-        assetDefinitionStore.fetchXML(forContract: contractAddress, useCacheAndFetch: true) { [weak self] _ in
+        assetDefinitionStore.fetchXML(forContract: contractAddress, server: server, useCacheAndFetch: true) { [weak self] _ in
             guard let strongSelf = self else { return }
 
             func makeTokenHolder(name: String, symbol: String, type: TokenType? = nil) {
@@ -482,7 +476,7 @@ class ImportMagicLinkCoordinator: Coordinator {
                 strongSelf.updateTokenFields()
             }
 
-            if let existingToken = strongSelf.tokensDataStore.token(forContract: contractAddress, server: strongSelf.server) {
+            if let existingToken = strongSelf.tokensService.token(for: contractAddress, server: strongSelf.server) {
                 let name = XMLHandler(token: existingToken, assetDefinitionStore: strongSelf.assetDefinitionStore).getLabel(fallback: existingToken.name)
                 makeTokenHolder(name: name, symbol: existingToken.symbol)
             } else {
@@ -503,8 +497,8 @@ class ImportMagicLinkCoordinator: Coordinator {
 
     private func makeTokenHolderImpl(name: String, symbol: String, type: TokenType? = nil, bytes32Tokens: [String], contractAddress: AlphaWallet.Address) {
         //TODO pass in the wallet instead
-        guard let tokenType = type ?? (tokensDataStore.token(forContract: contractAddress, server: server)?.type) else { return }
-        var tokens = [Token]()
+        guard let tokenType = type ?? (tokensService.token(for: contractAddress, server: server)?.type) else { return }
+        var tokens = [TokenScript.Token]()
         let xmlHandler = XMLHandler(contract: contractAddress, tokenType: tokenType, assetDefinitionStore: assetDefinitionStore)
         for i in 0..<bytes32Tokens.count {
             let token = bytes32Tokens[i]
@@ -522,11 +516,11 @@ class ImportMagicLinkCoordinator: Coordinator {
 
 	private func preparingToImportUniversalLink() {
 		guard let viewController = delegate?.viewControllerForPresenting(in: self) else { return }
-        importTokenViewController = ImportMagicTokenViewController(analyticsCoordinator: analyticsCoordinator, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: sessions[server])
+        importTokenViewController = ImportMagicTokenViewController(analytics: analytics, assetDefinitionStore: assetDefinitionStore, keystore: keystore, session: session)
         guard let vc = importTokenViewController else { return }
         vc.delegate = self
         vc.configure(viewModel: .init(state: .validating, server: server))
-        let nc = UINavigationController(rootViewController: vc)
+        let nc = NavigationController(rootViewController: vc)
         nc.makePresentationFullScreenForiOS13Migration()
         viewController.present(nc, animated: true)
 	}
@@ -567,9 +561,9 @@ class ImportMagicLinkCoordinator: Coordinator {
         updateImportTokenController(with: .failed(errorMessage: errorMessage), cost: cost)
 	}
 
-    private func importPaidSignedOrder(signedOrder: SignedOrder, tokenObject: TokenObject) {
+    private func importPaidSignedOrder(signedOrder: SignedOrder, token: Token) {
         guard let importTokenViewController = importTokenViewController else { return }
-        delegate?.importPaidSignedOrder(signedOrder: signedOrder, tokenObject: tokenObject, inViewController: importTokenViewController) { [weak self] successful in
+        delegate?.importPaidSignedOrder(signedOrder: signedOrder, token: token, inViewController: importTokenViewController) { [weak self] successful in
             guard let strongSelf = self else { return }
             guard let vc = strongSelf.importTokenViewController, case .ready = vc.state else { return }
             if successful {
@@ -637,8 +631,8 @@ extension ImportMagicLinkCoordinator: ImportMagicTokenViewControllerDelegate {
         switch transactionType {
         case .freeTransfer(let query, let parameters):
             importFreeTransfer(query: query, parameters: parameters)
-        case .paid(let signedOrder, let tokenObject):
-            importPaidSignedOrder(signedOrder: signedOrder, tokenObject: tokenObject)
+        case .paid(let signedOrder, let token):
+            importPaidSignedOrder(signedOrder: signedOrder, token: token)
         }
 	}
 }

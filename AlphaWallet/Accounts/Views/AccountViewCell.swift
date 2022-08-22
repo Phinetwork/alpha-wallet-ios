@@ -4,7 +4,7 @@ import UIKit
 import Combine
 
 class AccountViewCell: UITableViewCell {
-    private let addressLabel = UILabel()
+    private let addressOrEnsName = UILabel()
     private let apprecation24hourLabel = UILabel()
     private let balanceLabel = UILabel()
     private let blockieImageView = BlockieImageView(size: .init(width: 40, height: 40))
@@ -29,11 +29,11 @@ class AccountViewCell: UITableViewCell {
         separatorInset = .zero
         selectionStyle = .none
         isUserInteractionEnabled = true
-        addressLabel.lineBreakMode = .byTruncatingMiddle
+        addressOrEnsName.lineBreakMode = .byTruncatingMiddle
 
         let leftStackView = [
             [balanceLabel, apprecation24hourLabel].asStackView(spacing: 10),
-            addressLabel
+            addressOrEnsName
         ].asStackView(axis: .vertical)
 
         let stackView = [blockieImageView, leftStackView, .spacerWidth(10)].asStackView(spacing: 12, alignment: .top)
@@ -56,16 +56,21 @@ class AccountViewCell: UITableViewCell {
         return nil
     }
 
-    func configure(viewModel: AccountViewModel) {
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        cancelable.cancellAll()
+    }
+
+    func bind(viewModel: AccountViewModel) {
         cancelable.cancellAll()
 
         backgroundColor = viewModel.backgroundColor
         accessoryView = Style.AccessoryView.chevron
         selectedIndicator.isHidden = !viewModel.isSelected
 
-        viewModel.addressesAttrinutedString
-            .sink { [weak addressLabel] value in
-                addressLabel?.attributedText = value
+        viewModel.addressOrEnsName
+            .sink { [weak addressOrEnsName] value in
+                addressOrEnsName?.attributedText = value
             }.store(in: &cancelable)
 
         viewModel.blockieImage

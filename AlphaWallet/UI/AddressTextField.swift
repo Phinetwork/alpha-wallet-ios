@@ -11,11 +11,12 @@ protocol AddressTextFieldDelegate: AnyObject {
 }
 
 class AddressTextField: UIControl {
+    private let domainResolutionService: DomainResolutionServiceType
     private let notifications = NotificationCenter.default
     private var isConfigured = false
     private let textField = UITextField()
-    private let ensAddressLabel: AddressOrEnsNameLabel = {
-        let label = AddressOrEnsNameLabel()
+    lazy private var ensAddressLabel: AddressOrEnsNameLabel = {
+        let label = AddressOrEnsNameLabel(domainResolutionService: domainResolutionService)
         label.addressFormat = .truncateMiddle
         label.shouldShowLoadingIndicator = true
 
@@ -98,6 +99,9 @@ class AddressTextField: UIControl {
             }
         }
         set {
+            //Guard against setting the value consecutively breaking UI state due to multiple resolution. This can happen when an EIP681 link is tapped in the browser to trigger a send fungible screen
+            guard textFieldText != newValue else { return }
+
             //Client code sometimes sets back the address. We only set (and thus clear the ENS name) if it doesn't match the resolved address
             guard ensAddressLabel.stringValue != newValue else { return }
             textFieldText = newValue
@@ -137,7 +141,8 @@ class AddressTextField: UIControl {
 
     weak var delegate: AddressTextFieldDelegate?
 
-    init(edgeInsets: UIEdgeInsets = DataEntry.Metric.AddressTextField.insets) {
+    init(domainResolutionService: DomainResolutionServiceType, edgeInsets: UIEdgeInsets = DataEntry.Metric.AddressTextField.insets) {
+        self.domainResolutionService = domainResolutionService
         super.init(frame: .zero)
         pasteButton.addTarget(self, action: #selector(pasteAction), for: .touchUpInside)
         clearButton.addTarget(self, action: #selector(clearAction), for: .touchUpInside)
@@ -165,6 +170,7 @@ class AddressTextField: UIControl {
             selector: #selector(textDidChangeNotification),
             name: UITextField.textDidChangeNotification, object: nil)
     }
+
     //NOTE: maybe it's not a good name, but reasons using this function to extract default layout in separate function to prevent copying code
     func defaultLayout() -> UIView {
         let addressControlsContainer = UIView()

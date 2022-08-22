@@ -19,9 +19,8 @@ final class CombineTimer {
 
     var publisher: AnyPublisher<Void, Never> {
         intervalSubject
-            .map { Timer.TimerPublisher(interval: $0, runLoop: .main, mode: .default).autoconnect() }
-            .switchToLatest()
-            .map { _ in }
+            .flatMapLatest { Timer.TimerPublisher(interval: $0, runLoop: .main, mode: .default).autoconnect() }
+            .mapToVoid()
             .eraseToAnyPublisher()
     }
 

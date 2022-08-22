@@ -9,7 +9,6 @@ class TransactionDataStore {
     static var pendingTransactionsInformation: [String: (server: RPCServer, data: Data, transactionType: TransactionType, gasPrice: BigInt)] = .init()
 
     private let store: RealmStore
-    private let queue = DispatchQueue(label: "com.TransactionDataStore.UpdateQueue")
 
     init(store: RealmStore) {
         self.store = store
@@ -31,7 +30,7 @@ class TransactionDataStore {
         return results
     }
 
-    func transactionsChangesetPublisher(forFilter filter: TransactionsFilterStrategy, servers: [RPCServer]) -> AnyPublisher<ChangeSet<[TransactionInstance]>, Never> {
+    func transactionsChangeset(forFilter filter: TransactionsFilterStrategy, servers: [RPCServer]) -> AnyPublisher<ChangeSet<[TransactionInstance]>, Never> {
         let predicate: NSPredicate
         switch filter {
         case .filter(let filter, let tokenObject):
@@ -54,7 +53,8 @@ class TransactionDataStore {
                 .filter(predicate)
                 .sorted(byKeyPath: "date", ascending: false)
                 .changesetPublisher
-                .subscribe(on: queue)
+                .freeze()
+                .receive(on: DispatchQueue.global())
                 .map { change in
                     switch change {
                     case .initial(let transactions):
@@ -64,15 +64,21 @@ class TransactionDataStore {
                     case .error(let error):
                         return .error(error)
                     }
-                }
-                .eraseToAnyPublisher()
+                }.eraseToAnyPublisher()
         }
 
         return publisher
     }
 
     func transactions(forFilter filter: TransactionsFilterStrategy, servers: [RPCServer], oldestBlockNumber: Int? = nil) -> [TransactionInstance] {
-        let oldestBlockNumberPredicate = oldestBlockNumber.flatMap { [TransactionDataStore.functional.blockNumberPredicate(blockNumber: $0)] } ?? []
+        //NOTE: Allow pending transactions othewise it willn't appear as activity
+        let isPendingTransction = NSPredicate(format: "blockNumber == 0")
+        let oldestBlockNumberPredicate = oldestBlockNumber.flatMap {
+            [
+                NSCompoundPredicate(orPredicateWithSubpredicates: [TransactionDataStore.functional.blockNumberPredicate(blockNumber: $0), isPendingTransction])
+            ]
+        } ?? []
+
         let predicate: NSPredicate
         switch filter {
         case .filter(let filter, let tokenObject):
@@ -191,6 +197,8 @@ class TransactionDataStore {
     }
 
     func delete(transactions: [TransactionInstance]) {
+        guard !transactions.isEmpty else { return }
+
         store.performSync { realm in
             let objects = transactions.compactMap { realm.object(ofType: Transaction.self, forPrimaryKey: $0.primaryKey) }
             try? realm.safeWrite {
@@ -216,10 +224,12 @@ class TransactionDataStore {
     }
 
     @discardableResult func addOrUpdate(transactions: [TransactionInstance]) -> [TransactionInstance] {
+        guard !transactions.isEmpty else { return [] }
+
         var transactionsToReturn: [TransactionInstance] = []
 
         store.performSync { realm in
-            transactionsToReturn = filterTransactionsToNotOverrideERC20Transactions(transactions, realm: realm)
+            transactionsToReturn = self.filterTransactionsToNotOverrideERC20Transactions(transactions, realm: realm)
             guard !transactionsToReturn.isEmpty else { return }
 
             let transactionsToCommit = transactionsToReturn.map { Transaction(object: $0) }
@@ -247,8 +257,8 @@ class TransactionDataStore {
 
     @discardableResult func add(transactions: [TransactionInstance]) -> [TransactionInstance] {
         guard !transactions.isEmpty else { return [] }
-        let transactionsToAdd = transactions.map { Transaction(object: $0) }
 
+        let transactionsToAdd = transactions.map { Transaction(object: $0) }
         store.performSync { realm in
             try? realm.safeWrite {
                 realm.add(transactionsToAdd, update: .all)
@@ -298,7 +308,7 @@ class TransactionDataStore {
         } catch {
             verboseLog("Error writing transactions for \(server) to JSON: \(url.absoluteString) error: \(error)")
         }
-    } 
+    }
 }
 
 extension TransactionDataStore: Erc721TokenIdsFetcher {
@@ -342,8 +352,8 @@ extension TransactionDataStore {
 
 extension TransactionDataStore.functional {
 
-    static func transactionsFilter(for strategy: ActivitiesFilterStrategy, tokenObject: TokenObject) -> TransactionsFilterStrategy {
-        return .filter(strategy: strategy, tokenObject: tokenObject)
+    static func transactionsFilter(for strategy: ActivitiesFilterStrategy, token: Token) -> TransactionsFilterStrategy {
+        return .filter(strategy: strategy, token: token)
     }
 
     static func generateJsonForTransactions(transactionStorage: TransactionDataStore, server: RPCServer, toUrl url: URL) throws -> Data {

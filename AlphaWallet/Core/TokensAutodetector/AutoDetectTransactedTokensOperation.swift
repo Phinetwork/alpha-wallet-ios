@@ -11,11 +11,12 @@ import PromiseKit
 protocol AutoDetectTransactedTokensOperationDelegate: class {
     var isAutoDetectingTransactedTokens: Bool { get set }
 
-    func autoDetectTransactedErc20AndNonErc20Tokens(wallet: AlphaWallet.Address) -> Promise<[SingleChainTokensAutodetector.AddTokenObjectOperation]>
+    func didDetect(tokensOrContracts: [TokenOrContract])
+    func autoDetectTransactedErc20AndNonErc20Tokens(wallet: AlphaWallet.Address) -> Promise<[TokenOrContract]>
 }
 
 final class AutoDetectTransactedTokensOperation: Operation {
-    
+
     weak private var delegate: AutoDetectTransactedTokensOperationDelegate?
     override var isExecuting: Bool {
         return delegate?.isAutoDetectingTransactedTokens ?? false
@@ -28,15 +29,13 @@ final class AutoDetectTransactedTokensOperation: Operation {
     }
 
     private let session: WalletSession
-    private let tokensDataStore: TokensDataStore
 
-    init(session: WalletSession, tokensDataStore: TokensDataStore, delegate: AutoDetectTransactedTokensOperationDelegate) {
+    init(session: WalletSession, delegate: AutoDetectTransactedTokensOperationDelegate) {
         self.delegate = delegate
         self.session = session
-        self.tokensDataStore = tokensDataStore
         super.init()
         self.queuePriority = session.server.networkRequestsQueuePriority
-    } 
+    }
 
     override func main() {
         guard let delegate = delegate else { return }
@@ -51,7 +50,9 @@ final class AutoDetectTransactedTokensOperation: Operation {
             strongSelf.didChangeValue(forKey: "isFinished")
 
             guard !strongSelf.isCancelled else { return }
-            strongSelf.tokensDataStore.addTokenObjects(values: values)
-        }.cauterize()
+            strongSelf.delegate?.didDetect(tokensOrContracts: values)
+        }.catch { error in
+            verboseLog("Error while detecting tokens wallet: \(self.session.account.address.eip55String) error: \(error)")
+        }
     }
 }

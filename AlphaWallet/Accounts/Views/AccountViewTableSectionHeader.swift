@@ -48,7 +48,7 @@ class AccountViewTableSectionHeader: UIView {
         return nil
     }
 
-    func configure(type: AccountsSectionType, shouldHide: Bool) {
+    func configure(type: AccountsViewModel.Section, shouldHide: Bool) {
         backgroundColor = Style.Wallet.Header.backgroundColor
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.minimumLineHeight = 25
@@ -76,7 +76,7 @@ extension UIView {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
-        view.backgroundColor = Style.Wallet.Header.backgroundColor
+        view.backgroundColor = Configuration.Color.Semantic.tableViewHeaderBackground
 
         return view
     }

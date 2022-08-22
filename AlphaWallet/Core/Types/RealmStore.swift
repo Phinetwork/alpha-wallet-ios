@@ -9,35 +9,68 @@ import Realm
 import RealmSwift
 import Foundation
 
-final class RealmStore {
-    private let syncQueue: DispatchQueue
-    private let config: Realm.Configuration
-    private let mainThreadRealm: Realm
+func fakeRealm(wallet: Wallet, inMemoryIdentifier: String = "MyInMemoryRealm") -> Realm {
+    let uuid = UUID().uuidString
+    return try! Realm(configuration: Realm.Configuration(inMemoryIdentifier: "\(inMemoryIdentifier)-\(wallet.address.eip55String)-\(uuid)"))
+}
 
-    public init(syncQueue: DispatchQueue = DispatchQueue(label: "com.RealmStore.syncQueue", qos: .background), realm: Realm) {
-        self.syncQueue = syncQueue
+func fakeRealm(inMemoryIdentifier: String = "MyInMemoryRealm") -> Realm {
+    let uuid = UUID().uuidString
+    return try! Realm(configuration: Realm.Configuration(inMemoryIdentifier: "\(inMemoryIdentifier)-\(uuid)"))
+}
+
+fileprivate let queueForRealmStore = DispatchQueue(label: "org.alphawallet.swift.realm.store", qos: .background)
+
+class RealmStore {
+    static func threadName(for wallet: Wallet) -> String {
+        return "org.alphawallet.swift.realmStore.\(wallet.address).wallet"
+    }
+    private let config: Realm.Configuration
+    private let thread: RunLoopThread = .init()
+    private let mainThreadRealm: Realm
+    //NOTE: Making it as lazy removes blocking main thread (when init method get called), and we sure that backgroundThreadRealm always get called in thread.performSync() { context
+    private lazy var backgroundThreadRealm: Realm = {
+        guard let realm = try? Realm(configuration: config) else { fatalError("Failure to resolve background realm") }
+
+        return realm
+    }()
+
+    public init(realm: Realm, name: String = "org.alphawallet.swift.realmStore") {
         self.mainThreadRealm = realm
-        self.config = realm.configuration
+        config = realm.configuration
+
+        thread.name = name
+        thread.start()
     }
 
-    func performSync(_ callback: (Realm) -> Void) {
+    func performSync(_ block: @escaping (Realm) -> Void) {
         if Thread.isMainThread {
-            callback(mainThreadRealm)
+            block(mainThreadRealm)
         } else {
-            dispatchPrecondition(condition: .notOnQueue(syncQueue))
-            syncQueue.sync {
-                autoreleasepool {
-                    guard let realm = try? Realm(configuration: config) else { return }
-                    callback(realm)
+            //NOTE: synchronize calls from different threads to avoid
+            //*** -[AlphaWallet.RunLoopThread performSelector:onThread:withObject:waitUntilDone:modes:]: target thread exited while waiting for the perform
+            dispatchPrecondition(condition: .notOnQueue(queueForRealmStore))
+            queueForRealmStore.sync {
+                //NOTE: perform an operation on run loop thread
+                thread._perform {
+                    block(self.backgroundThreadRealm)
                 }
             }
         }
     }
 }
 
+extension RealmStore {
+    static var shared: RealmStore = RealmStore(realm: Realm.shared())
+
+    static func storage(for wallet: Wallet) -> RealmStore {
+        RealmStore(realm: .realm(for: wallet), name: RealmStore.threadName(for: wallet))
+    } 
+}
+
 extension Realm {
 
-    static func realm(forAccount account: Wallet) -> Realm {
+    static func realm(for account: Wallet) -> Realm {
         let migration = DatabaseMigration(account: account)
         migration.perform()
 
@@ -47,7 +80,13 @@ extension Realm {
     }
 
     static func shared(_ name: String = "Shared") -> Realm {
-        let configuration = RealmConfiguration.configuration(name: name)
+        var configuration = RealmConfiguration.configuration(name: name)
+        configuration.objectTypes = [
+            Bookmark.self,
+            History.self,
+            EnsRecordObject.self
+        ]
+        
         let realm = try! Realm(configuration: configuration)
 
         return realm
@@ -59,65 +98,5 @@ extension Realm {
         } else {
             try write(block)
         }
-    }
-}
-
-protocol DetachableObject: AnyObject {
-    func detached() -> Self
-}
-
-extension Object: DetachableObject {
-
-    func detached() -> Self {
-        let detached = type(of: self).init()
-        for property in objectSchema.properties {
-            guard let value = value(forKey: property.name) else { continue }
-
-            if property.isArray == true {
-                //Realm List property support
-                let detachable = value as? DetachableObject
-                detached.setValue(detachable?.detached(), forKey: property.name)
-            } else if property.type == .object {
-                //Realm Object property support
-                let detachable = value as? DetachableObject
-                detached.setValue(detachable?.detached(), forKey: property.name)
-            } else {
-                detached.setValue(value, forKey: property.name)
-            }
-        }
-        return detached
-    }
-}
-
-extension List: DetachableObject {
-    func detached() -> List<Element> {
-        let result = List<Element>()
-
-        forEach {
-            if let detachable = $0 as? DetachableObject {
-                let detached = detachable.detached() as! Element
-                result.append(detached)
-            } else {
-                result.append($0) //Primtives are pass by value; don't need to recreate
-            }
-        }
-
-        return result
-    }
-
-    func toArray() -> [Element] {
-        return Array(self.detached())
-    }
-}
-
-extension Results {
-    func toArray() -> [Element] {
-        let result = List<Element>()
-
-        forEach {
-            result.append($0)
-        }
-
-        return Array(result.detached())
     }
 }

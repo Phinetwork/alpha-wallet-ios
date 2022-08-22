@@ -8,9 +8,8 @@
 import Foundation
 import UIKit
 
-class TokenCardWebView: UIView, TokenCardRowViewConfigurable, ViewRoundingSupportable {
-
-    private let analyticsCoordinator: AnalyticsCoordinator
+class TokenCardWebView: UIView, TokenCardRowViewConfigurable, ViewRoundingSupportable, ViewLoadingCancelable {
+    private let analytics: AnalyticsLogger
     private let server: RPCServer
     private let assetDefinitionStore: AssetDefinitionStore
     private var lastTokenHolder: TokenHolder?
@@ -18,7 +17,7 @@ class TokenCardWebView: UIView, TokenCardRowViewConfigurable, ViewRoundingSuppor
     private let keystore: Keystore
     private let wallet: Wallet
     private lazy var tokenScriptRendererView: TokenInstanceWebView = {
-        let webView = TokenInstanceWebView(analyticsCoordinator: analyticsCoordinator, server: server, wallet: wallet, assetDefinitionStore: assetDefinitionStore, keystore: keystore)
+        let webView = TokenInstanceWebView(analytics: analytics, server: server, wallet: wallet, assetDefinitionStore: assetDefinitionStore, keystore: keystore)
         webView.delegate = self
         return webView
     }()
@@ -30,9 +29,9 @@ class TokenCardWebView: UIView, TokenCardRowViewConfigurable, ViewRoundingSuppor
         set { tokenScriptRendererView.isStandalone = newValue }
     }
 
-    init(analyticsCoordinator: AnalyticsCoordinator, server: RPCServer, tokenView: TokenView, assetDefinitionStore: AssetDefinitionStore, keystore: Keystore, wallet: Wallet) {
+    init(analytics: AnalyticsLogger, server: RPCServer, tokenView: TokenView, assetDefinitionStore: AssetDefinitionStore, keystore: Keystore, wallet: Wallet) {
         self.keystore = keystore
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
         self.server = server
         self.tokenView = tokenView
         self.assetDefinitionStore = assetDefinitionStore
@@ -51,12 +50,12 @@ class TokenCardWebView: UIView, TokenCardRowViewConfigurable, ViewRoundingSuppor
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(tokenHolder: TokenHolder, tokenId: TokenId, tokenView: TokenView, assetDefinitionStore: AssetDefinitionStore) {
+    func configure(tokenHolder: TokenHolder, tokenId: TokenId) {
         lastTokenHolder = tokenHolder
         configure(viewModel: TokenCardWebViewModel(tokenHolder: tokenHolder, tokenId: tokenId, tokenView: tokenView, assetDefinitionStore: assetDefinitionStore))
     }
 
-    func configure(viewModel: TokenCardWebViewModel) {
+    private func configure(viewModel: TokenCardWebViewModel) {
         backgroundColor = viewModel.contentsBackgroundColor
         if viewModel.hasTokenScriptHtml {
             tokenScriptRendererView.isHidden = false
@@ -68,6 +67,9 @@ class TokenCardWebView: UIView, TokenCardRowViewConfigurable, ViewRoundingSuppor
         }
     }
 
+    func cancel() {
+        tokenScriptRendererView.stopLoading()
+    }
 }
 
 extension TokenCardWebView: TokenInstanceWebViewDelegate {

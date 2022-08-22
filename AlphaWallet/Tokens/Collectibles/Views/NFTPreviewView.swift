@@ -7,17 +7,28 @@
 
 import UIKit
 
-class NFTPreviewView: UIView, ConfigurableNFTPreviewView, ViewRoundingSupportable {
+class NFTPreviewView: UIView, ConfigurableNFTPreviewView, ViewRoundingSupportable, ContentBackgroundSupportable, ViewLoadingCancelable {
+    private var previewView: UIView & ConfigurableNFTPreviewView & ViewRoundingSupportable & ContentBackgroundSupportable & ViewLoadingCancelable
 
-    private var previewView: UIView & ConfigurableNFTPreviewView & ViewRoundingSupportable
-    var rounding: ViewRounding = .none { didSet { previewView.rounding = rounding } }
+    var rounding: ViewRounding = .none {
+        didSet { previewView.rounding = rounding }
+    }
+    
+    override var contentMode: UIView.ContentMode {
+        didSet { previewView.contentMode = contentMode }
+    }
 
-    init(type: NFTPreviewViewType, keystore: Keystore, session: WalletSession, assetDefinitionStore: AssetDefinitionStore, analyticsCoordinator: AnalyticsCoordinator, edgeInsets: UIEdgeInsets = .zero) {
+    var contentBackgroundColor: UIColor? {
+        get { return previewView.contentBackgroundColor }
+        set { previewView.contentBackgroundColor = newValue }
+    }
+
+    init(type: NFTPreviewViewType, keystore: Keystore, session: WalletSession, assetDefinitionStore: AssetDefinitionStore, analytics: AnalyticsLogger, edgeInsets: UIEdgeInsets = .zero) {
         switch type {
         case .imageView:
             previewView = NFTPreviewView.generateTokenImageView()
         case .tokenCardView:
-            previewView = NFTPreviewView.generateTokenCardView(keystore: keystore, session: session, assetDefinitionStore: assetDefinitionStore, analyticsCoordinator: analyticsCoordinator)
+            previewView = NFTPreviewView.generateTokenCardView(keystore: keystore, session: session, assetDefinitionStore: assetDefinitionStore, analytics: analytics)
         }
         super.init(frame: .zero)
 
@@ -38,8 +49,12 @@ class NFTPreviewView: UIView, ConfigurableNFTPreviewView, ViewRoundingSupportabl
         previewView.configure(params: params)
     }
 
-    private static func generateTokenCardView(keystore: Keystore, session: WalletSession, assetDefinitionStore: AssetDefinitionStore, analyticsCoordinator: AnalyticsCoordinator) -> TokenCardWebView {
-        let tokeCardWebView = TokenCardWebView(analyticsCoordinator: analyticsCoordinator, server: session.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: session.account)
+    func cancel() {
+        previewView.cancel()
+    }
+
+    private static func generateTokenCardView(keystore: Keystore, session: WalletSession, assetDefinitionStore: AssetDefinitionStore, analytics: AnalyticsLogger) -> TokenCardWebView {
+        let tokeCardWebView = TokenCardWebView(analytics: analytics, server: session.server, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore, keystore: keystore, wallet: session.account)
         return tokeCardWebView
     }
 
@@ -50,21 +65,31 @@ class NFTPreviewView: UIView, ConfigurableNFTPreviewView, ViewRoundingSupportabl
         imageView.rounding = .none
         imageView.isChainOverlayHidden = true
         imageView.contentMode = .scaleAspectFit
+
         return imageView
     }
 }
 
-extension TokenImageView: ConfigurableNFTPreviewView {
+extension TokenImageView: ConfigurableNFTPreviewView, ContentBackgroundSupportable {
+    var contentBackgroundColor: UIColor? {
+        get { return imageView.contentBackgroundColor }
+        set { imageView.contentBackgroundColor = newValue }
+    }
+
     func configure(params: NFTPreviewViewType.Params) {
         guard case .image(let iconImage) = params else { subscribable = .none; return; }
         subscribable = iconImage
     }
 }
 
-extension TokenCardWebView: ConfigurableNFTPreviewView {
+extension TokenCardWebView: ConfigurableNFTPreviewView, ContentBackgroundSupportable {
+    var contentBackgroundColor: UIColor? {
+        get { return backgroundColor }
+        set { backgroundColor = newValue }
+    }
+
     func configure(params: NFTPreviewViewType.Params) {
-        guard case .some(let tokenHolder, let tokenId, let tokenView, let assetDefinitionStore) = params else { return }
-        configure(tokenHolder: tokenHolder, tokenId: tokenId, tokenView: tokenView, assetDefinitionStore: assetDefinitionStore)
+        guard case .tokenScriptWebView(let tokenHolder, let tokenId) = params else { return }
+        configure(tokenHolder: tokenHolder, tokenId: tokenId)
     }
 }
-

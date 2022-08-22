@@ -6,7 +6,7 @@
 
 /// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-712.md
 import Foundation
-import BigInt 
+import BigInt
 
 /// A struct represents EIP712 type tuple
 struct EIP712Type: Codable {
@@ -60,6 +60,7 @@ extension EIP712TypedData {
 
     /// Recursively finds all the dependencies of a type
     func findDependencies(primaryType: String, dependencies: Set<String> = Set<String>()) -> Set<String> {
+        let primaryType = primaryType.dropTrailingSquareBrackets
         var found = dependencies
         guard !found.contains(primaryType),
             let primaryTypes = types[primaryType] else {
@@ -115,7 +116,7 @@ extension EIP712TypedData {
             //Can't check for "[]" because we want to support static arrays: Type[n]
         } else if let indexOfOpenBracket = type.index(of: "["), type.hasSuffix("]"), case let .array(elements) = value {
             var encodedElements: Data = .init()
-            let elementType = type.substring(to: indexOfOpenBracket)
+            let elementType = String(type[type.startIndex..<indexOfOpenBracket])
             for each in elements {
                 if let value = try encodeField(value: each, type: elementType) {
                     let encoder = ABIEncoder()
@@ -214,6 +215,16 @@ extension EIP712TypedData {
     }
 }
 
+fileprivate extension String {
+    var dropTrailingSquareBrackets: String {
+        if let i = index(of: "["), hasSuffix("]") {
+            return String(self[startIndex..<i])
+        } else {
+            return self
+        }
+    }
+}
+
 private extension BigInt {
     init?(value: String) {
         if value.starts(with: "0x") {
@@ -222,6 +233,12 @@ private extension BigInt {
             self.init(value)
         }
     }
+}
+
+func abs(_ value: BigInt) -> BigInt {
+    guard value.sign == .minus else { return value }
+
+    return BigInt(sign: .plus, magnitude: value.magnitude)
 }
 
 private extension BigUInt {

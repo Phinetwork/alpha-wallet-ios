@@ -18,7 +18,7 @@ protocol SignMessageCoordinatorDelegate: AnyObject {
 }
 
 class SignMessageCoordinator: Coordinator {
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private let navigationController: UINavigationController
     private let keystore: Keystore
     private let account: AlphaWallet.Address
@@ -26,9 +26,9 @@ class SignMessageCoordinator: Coordinator {
     private let source: Analytics.SignMessageRequestSource
     private weak var signatureConfirmationDetailsViewController: SignatureConfirmationDetailsViewController?
     private var canBeDismissed = true
-    private let walletConnectDappRequesterViewModel: WalletConnectDappRequesterViewModel?
+    private let requester: RequesterViewModel?
     private lazy var rootViewController: SignatureConfirmationViewController = {
-        let controller = SignatureConfirmationViewController(viewModel: .init(message: message, walletConnectDappRequesterViewModel: walletConnectDappRequesterViewModel))
+        let controller = SignatureConfirmationViewController(viewModel: .init(message: message, requester: requester))
         controller.delegate = self
         return controller
     }()
@@ -36,10 +36,10 @@ class SignMessageCoordinator: Coordinator {
     var coordinators: [Coordinator] = []
     weak var delegate: SignMessageCoordinatorDelegate?
     
-    init(analyticsCoordinator: AnalyticsCoordinator, navigationController: UINavigationController, keystore: Keystore, account: AlphaWallet.Address, message: SignMessageType, source: Analytics.SignMessageRequestSource, walletConnectDappRequesterViewModel: WalletConnectDappRequesterViewModel?) {
-        self.analyticsCoordinator = analyticsCoordinator
+    init(analytics: AnalyticsLogger, navigationController: UINavigationController, keystore: Keystore, account: AlphaWallet.Address, message: SignMessageType, source: Analytics.SignMessageRequestSource, requester: RequesterViewModel?) {
+        self.analytics = analytics
         self.navigationController = navigationController
-        self.walletConnectDappRequesterViewModel = walletConnectDappRequesterViewModel
+        self.requester = requester
         self.keystore = keystore
         self.account = account
         self.message = message
@@ -57,7 +57,10 @@ class SignMessageCoordinator: Coordinator {
     }()
 
     func start() {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.signMessageRequest, properties: [Analytics.Properties.source.rawValue: source.rawValue, Analytics.Properties.messageType.rawValue: mapMessageToAnalyticsType(message).rawValue])
+        analytics.log(navigation: Analytics.Navigation.signMessageRequest, properties: [
+            Analytics.Properties.source.rawValue: source.rawValue,
+            Analytics.Properties.messageType.rawValue: mapMessageToAnalyticsType(message).rawValue
+        ])
 
         let presenter = UIApplication.shared.presentedViewController(or: navigationController)
         presenter.present(hostViewController, animated: true)
@@ -124,14 +127,14 @@ extension SignMessageCoordinator: FloatingPanelControllerDelegate {
 extension SignMessageCoordinator: SignatureConfirmationViewControllerDelegate {
 
     func controller(_ controller: SignatureConfirmationViewController, continueButtonTapped sender: UIButton) {
-        analyticsCoordinator.log(action: Analytics.Action.signMessageRequest)
+        analytics.log(action: Analytics.Action.signMessageRequest)
         signMessage(with: message)
     }
 
     func controllerDidTapEdit(_ controller: SignatureConfirmationViewController, for section: Int) {
         let controller = SignatureConfirmationDetailsViewController(viewModel: controller.viewModel[section])
 
-        let navigationController = UINavigationController(rootViewController: controller)
+        let navigationController = NavigationController(rootViewController: controller)
         navigationController.makePresentationFullScreenForiOS13Migration()
         controller.navigationItem.leftBarButtonItem = .closeBarButton(self, selector: #selector(configureTransactionDidDismiss))
 
@@ -140,7 +143,7 @@ extension SignMessageCoordinator: SignatureConfirmationViewControllerDelegate {
     }
 
     func didClose(in controller: SignatureConfirmationViewController) {
-        analyticsCoordinator.log(action: Analytics.Action.cancelSignMessageRequest)
+        analytics.log(action: Analytics.Action.cancelSignMessageRequest)
         rootViewController.dismiss(animated: true) {
             self.delegate?.didCancel(in: self)
         }
@@ -153,7 +156,7 @@ extension SignMessageCoordinator: SignatureConfirmationViewControllerDelegate {
 
 private extension SignatureConfirmationViewModel {
     subscript(section: Int) -> SignatureConfirmationDetailsViewModel {
-        switch self {
+        switch self.type {
         case .message(let viewModel):
             return .init(value: .message(viewModel.message))
         case .personalMessage(let viewModel):

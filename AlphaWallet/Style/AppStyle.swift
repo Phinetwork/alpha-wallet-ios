@@ -4,12 +4,9 @@ import Foundation
 import UIKit
 
 func applyStyle() {
-    UIBarButtonItem.appearance(whenContainedInInstancesOf: [UIDocumentBrowserViewController.self]).tintColor = Colors.navigationButtonTintColor
+    UIBarButtonItem.appearance(whenContainedInInstancesOf: [UIDocumentBrowserViewController.self]).tintColor = Configuration.Color.Semantic.navigationbarButtonItemTint
     UIWindow.appearance().tintColor = Colors.appTint
-    UITabBar.appearance().tintColor = Colors.appTint
-    UITabBar.appearance().shadowImage = UIImage(color: Style.TabBar.Separator.color, size: CGSize(width: 0.25, height: 0.25))
-    UITabBar.appearance().backgroundImage = UIImage(color: Style.TabBar.Background.color)
-    
+
     UINavigationBar.appearance().shadowImage = UIImage(color: Style.NavigationBar.Separator.color, size: CGSize(width: 0.25, height: 0.25))
     UINavigationBar.appearance().compactAppearance = UINavigationBarAppearance.defaultAppearence
     UINavigationBar.appearance().standardAppearance = UINavigationBarAppearance.defaultAppearence
@@ -17,39 +14,39 @@ func applyStyle() {
 
     //We could have set the backBarButtonItem with an empty title for every view controller. Using appearance here, while a hack is still more convenient though, since we don't have to do it for every view controller instance
     UIBarButtonItem.appearance().setBackButtonTitlePositionAdjustment(UIOffset(horizontal: -200, vertical: 0), for: .default)
-    UIBarButtonItem.appearance().tintColor = Colors.navigationButtonTintColor
-    UIBarButtonItem.appearance(whenContainedInInstancesOf: [UIToolbar.self]).tintColor = Colors.navigationButtonTintColor
+    UIBarButtonItem.appearance().tintColor = Configuration.Color.Semantic.navigationbarButtonItemTint
+    UIBarButtonItem.appearance(whenContainedInInstancesOf: [UIToolbar.self]).tintColor = Configuration.Color.Semantic.navigationbarButtonItemTint
 
     UIToolbar.appearance().tintColor = Colors.appTint
 
     //Background (not needed in iOS 12.1 on simulator)
     UISearchBar.appearance().backgroundColor = Colors.appBackground
     //Cancel button
-    UISearchBar.appearance().tintColor = Colors.navigationButtonTintColor
+    UISearchBar.appearance().tintColor = Configuration.Color.Semantic.searchbarTint
     //Cursor color
-    UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).tintColor = Colors.navigationTitleColor
+    UITextField.appearance(whenContainedInInstancesOf: [UISearchBar.self]).tintColor = Configuration.Color.Semantic.searchbarTint
 
     UIRefreshControl.appearance().tintColor = Colors.navigationTitleColor
 
     UISwitch.appearance().onTintColor = Colors.appTint
 
-    UITableView.appearance().separatorColor = Style.TableView.Separator.color
+    UITableView.appearance().separatorColor = Configuration.Color.Semantic.tableViewSeparator
 }
 
 extension UINavigationBarAppearance {
     static var defaultAppearence: UINavigationBarAppearance {
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = R.color.white()!
-        appearance.shadowColor = Style.NavigationBar.Separator.color
+        appearance.backgroundColor = Configuration.Color.Semantic.navigationbarBackgroundColor
+        appearance.shadowColor = Configuration.Color.Semantic.navigationbarSeparator
         appearance.shadowImage = nil
         appearance.setBackIndicatorImage(R.image.backWhite(), transitionMaskImage: R.image.backWhite())
         appearance.titleTextAttributes = [
-            .foregroundColor: R.color.black()!,
+            .foregroundColor: Configuration.Color.Semantic.navigationbarPrimaryFont,
             .font: Fonts.semibold(size: 17) as Any
         ]
         appearance.largeTitleTextAttributes = [
-            .foregroundColor: R.color.black()!,
+            .foregroundColor: Configuration.Color.Semantic.navigationbarPrimaryFont,
             .font: Fonts.bold(size: 36) as Any,
         ]
         //NOTE: Hides back button text
@@ -65,12 +62,13 @@ extension UITabBarAppearance {
     static var defaultAppearence: UITabBarAppearance {
         let tabBarAppearance = UITabBarAppearance()
 
-        tabBarAppearance.shadowImage = UIImage(color: Style.TabBar.Separator.color, size: CGSize(width: 0.25, height: 0.25))
-        tabBarAppearance.backgroundImage = UIImage(color: Style.TabBar.Background.color)
+        tabBarAppearance.backgroundColor = Configuration.Color.Semantic.tabBarBackground
+        tabBarAppearance.shadowColor = Configuration.Color.Semantic.tabBarSeparator
+
         let tabBarItemAppearance = UITabBarItemAppearance()
 
-        tabBarItemAppearance.normal.titleTextAttributes = [.font: Style.TabBar.Font.normal]
-        tabBarItemAppearance.selected.titleTextAttributes = [.font: Style.TabBar.Font.selected]
+        tabBarItemAppearance.normal.titleTextAttributes = [.font: Style.TabBar.Font.normal, .foregroundColor: Style.TabBar.Color.normal]
+        tabBarItemAppearance.selected.titleTextAttributes = [.font: Style.TabBar.Font.selected, .foregroundColor: Style.TabBar.Color.selected]
 
         tabBarAppearance.stackedLayoutAppearance = tabBarItemAppearance
 
@@ -82,7 +80,7 @@ extension UITabBarController {
     static func withOverridenBarAppearence(appearence tabBarAppearance: UITabBarAppearance = .defaultAppearence) -> UITabBarController {
         let tabBarController = UITabBarController()
         tabBarController.tabBar.isTranslucent = false
-        tabBarController.tabBar.tintColor = Colors.appTint
+        tabBarController.tabBar.tintColor = Configuration.Color.Semantic.tabBarTint
         tabBarController.tabBar.standardAppearance = tabBarAppearance
 
         if #available(iOS 15.0, *) {
@@ -104,10 +102,11 @@ struct Colors {
     static let darkGray = UIColor(hex: "2f2f2f")
     static let black = UIColor(hex: "313849")
     static let lightBlack = UIColor(hex: "313849")
+    static let clear = UIColor.clear
     static let appBackground = UIColor.white
     static let appTint = R.color.azure()!
     static let navigationTitleColor = UIColor.black
-    static let navigationButtonTintColor = R.color.mine()!
+    // static let navigationButtonTintColor = R.color.mine()!
     static let appWhite = UIColor.white
     static let appText = R.color.black()!
     static let appSubtitle = UIColor(red: 117, green: 117, blue: 117)
@@ -132,12 +131,6 @@ struct StyleLayout {
 }
 
 struct Fonts {
-    static func light(size: CGFloat) -> UIFont {
-        return UIFont(resource: R.font.sourceSansProLight, size: size)!
-    }
-    static func italic(size: CGFloat) -> UIFont {
-        return UIFont(resource: R.font.sourceSansProItalic, size: size)!
-    }
     static func regular(size: CGFloat) -> UIFont {
         return UIFont(resource: R.font.sourceSansProRegular, size: size)!
     }
@@ -190,7 +183,7 @@ enum GroupedTable {
     }
 
     enum Color {
-        static let title = UIColor(red: 76, green: 76, blue: 76)
+        static let title = R.color.black()!
         static let background = R.color.alabaster()!
         static let cellSeparator = UIColor(red: 233, green: 233, blue: 233)
     }
@@ -376,7 +369,7 @@ enum Style {
             static let height = 60.0
             static let backgroundColor = R.color.alabaster()
             static let textColor = R.color.dove()
-            static let font = R.font.sourceSansProSemibold(size: 15.0)
+            static let font = Fonts.semibold(size: 15)
         }
         enum Row {
             static let height = 80.0
@@ -409,6 +402,7 @@ enum Style {
     }
     enum TabBar {
         enum Background {
+            static let tint: UIColor = Colors.appTint
             static let color: UIColor = {
                 return UIColor.systemBackground
             }()
@@ -417,12 +411,12 @@ enum Style {
             static let color: UIColor = R.color.mercury()!
         }
         enum Font {
-            static let normal: UIFont = R.font.sourceSansProRegular(size: 13.0)!
-            static let selected: UIFont = R.font.sourceSansProSemibold(size: 13.0)!
-            enum Color {
-                static let selected: UIColor = R.color.azure()!
-                static let normal: UIColor = R.color.dove()!
-            }
+            static let normal: UIFont = Fonts.regular(size: 13)
+            static let selected: UIFont = Fonts.semibold(size: 13)
+        }
+        enum Color {
+            static let selected: UIColor = R.color.azure()!
+            static let normal: UIColor = R.color.dove()!
         }
     }
     enum SegmentedControl {
@@ -430,7 +424,7 @@ enum Style {
             static let color: UIColor = R.color.mercury()!
         }
     }
-    
+
     enum NavigationBar {
         enum Separator {
             static let color: UIColor = R.color.mercury()!
@@ -453,17 +447,17 @@ enum Style {
     enum Search {
         enum Network {
             enum Empty {
-                static let font = R.font.sourceSansProRegular(size: 17.0)
+                static let font = Fonts.regular(size: 17)
                 static let color: UIColor = R.color.mine()!
                 static let text: String = R.string.localizable.searchNetworkResultEmpty()
             }
         }
     }
     enum ScrollableSegmentedControl {
-        static let configuration = ScrollableSegmentedControlConfiguration(lineConfiguration: ScrollableSegmentedControlHighlightableLineViewConfiguration(lineHeight: 1.0, highlightHeight: 3.0, lineColor: R.color.mercury()!, highLightColor: R.color.azure()!), isProportionalWidth: true, cellSpacing: 0.0, alignmentWhenNotScrollable: .filled, animationDuration: 0.25, animationCurve: .easeInOut)
+        static let configuration = ScrollableSegmentedControlConfiguration(lineConfiguration: ScrollableSegmentedControlHighlightableLineViewConfiguration(lineHeight: 1.0, highlightHeight: 3.0, lineColor: Configuration.Color.Semantic.scrollableSegmentedControlLineColor, highLightColor: Configuration.Color.Semantic.scrollableSegmentedControllerHighlightColor), isProportionalWidth: true, cellSpacing: 10.0, alignmentWhenNotScrollable: .filled, animationDuration: 0.25, animationCurve: .easeInOut)
     }
     enum ScrollableSegmentedControlCell {
-        static let configuration = ScrollableSegmentedControlCellConfiguration(backgroundColor: .white, highlightedTextColor: R.color.azure()!, nonHighlightedTextColor: R.color.dove()!, highlightedFont: R.font.sourceSansProSemibold(size: 15.0)!, nonHighlightedFont: R.font.sourceSansProRegular(size: 15.0)!, cellPadding: 8.0, textBottomPadding: 12.0)
+        static let configuration = ScrollableSegmentedControlCellConfiguration(backgroundColor: Configuration.Color.Semantic.scrollableSegmentedControllerBackground, highlightedTextColor: R.color.azure()!, nonHighlightedTextColor: Configuration.Color.Semantic.scrollableSegmentedControllerNonHighlightColor, highlightedFont: Fonts.semibold(size: 15), nonHighlightedFont: Fonts.regular(size: 15), cellPadding: 8.0, textBottomPadding: 12.0)
     }
     enum value {
         static let appreciated: UIColor = R.color.green()!

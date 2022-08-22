@@ -13,7 +13,7 @@ target 'AlphaWallet' do
   pod 'QRCodeReaderViewController', :git=>'https://github.com/AlphaWallet/QRCodeReaderViewController.git', :commit=>'30d1a2a7d167d0d207ae0ae3a4d81bcf473d7a65'
   pod 'KeychainSwift', :git=>'https://github.com/AlphaWallet/keychain-swift.git', :commit=> 'b797d40a9d08ec509db4335140cf2259b226e6a2'
   pod 'SwiftLint', '0.40.3'
-  pod 'RealmSwift', '5.5.1'
+  pod 'RealmSwift', '10.27.0'
   pod 'Moya', '~> 10.0.1'
   pod 'CryptoSwift', '~> 1.4'
   pod 'Kingfisher', '~> 7.0'
@@ -21,7 +21,7 @@ target 'AlphaWallet' do
   pod 'TrezorCrypto', :git=>'https://github.com/AlphaWallet/trezor-crypto-ios.git', :commit => '50c16ba5527e269bbc838e80aee5bac0fe304cc7'
   pod 'TrustKeystore', :git => 'https://github.com/AlphaWallet/latest-keystore-snapshot', :commit => 'c0bdc4f6ffc117b103e19d17b83109d4f5a0e764'
   pod 'SwiftyJSON', '5.0.0'
-  pod 'web3swift', :git => 'https://github.com/AlphaWallet/web3swift.git', :commit=> '183b97078b9f98dbc7e6029db08c0cd1247829fc'
+  pod 'web3swift', :git => 'https://github.com/AlphaWallet/web3swift.git', :commit=> '72d6514f6ac29a68abb7b9cbab5685799c18d77a'
   pod 'SAMKeychain'
   pod 'PromiseKit/CorePromise'
   pod 'PromiseKit/Alamofire'
@@ -29,21 +29,23 @@ target 'AlphaWallet' do
   pod 'TrustWalletCore', '2.6.34'
   pod 'AWSSNS', '2.18.0'
   pod 'Mixpanel-swift', '~> 3.1'
-  pod 'EthereumABI', '1.3.0'
+  pod 'EthereumABI', :git => 'https://github.com/AlphaWallet/EthereumABI.git', :commit => '877b77e8e7cbc54ab0712d509b74fec21b79d1bb'
   pod 'BlockiesSwift'
   pod 'PaperTrailLumberjack/Swift'
-  pod 'WalletConnectSwift', :git => 'https://github.com/WalletConnect/WalletConnectSwift.git'
+  pod 'WalletConnectSwift', :git => 'https://github.com/AlphaWallet/WalletConnectSwift.git', :commit => 'b6556058331f619e15482b82d7c6ab57d9711399'
   pod 'Charts'
   pod 'CocoaLumberjack', '3.7.0'
   pod 'AlphaWalletAddress', :path => 'modules/AlphaWalletAddress'
   pod 'AlphaWalletCore', :path => 'modules/AlphaWalletCore'
+  pod 'AlphaWalletGoBack', :path => 'modules/AlphaWalletGoBack'
   pod 'AlphaWalletENS', :path => 'modules/AlphaWalletENS'
   pod 'AlphaWalletOpenSea', :path => 'modules/AlphaWalletOpenSea'
   pod 'Apollo' 
   pod 'MailchimpSDK'
   pod 'xcbeautify'
   pod 'FloatingPanel'
-
+  pod 'CombineExt'
+  
   target 'AlphaWalletTests' do
       inherit! :search_paths
       # Pods for testing
@@ -56,7 +58,7 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     target.build_configurations.each do |config|
       config.build_settings['ONLY_ACTIVE_ARCH'] = 'YES'
-      config.build_settings['ENABLE_BITCODE'] = 'YES'
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
     end
     
     if ['MailchimpSDK'].include? target.name

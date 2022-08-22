@@ -2,7 +2,7 @@
 
 import Foundation
 
-enum WalletType: Equatable, CustomStringConvertible {
+enum WalletType: Equatable, Hashable, CustomStringConvertible {
     case real(AlphaWallet.Address)
     case watch(AlphaWallet.Address)
 
@@ -16,9 +16,16 @@ enum WalletType: Equatable, CustomStringConvertible {
     }
 }
 
+enum WalletOrigin: Int {
+    case privateKey
+    case hd
+    case watch
+}
+
 struct Wallet: Equatable, CustomStringConvertible {
     let type: WalletType
-
+    let origin: WalletOrigin
+    
     var address: AlphaWallet.Address {
         switch type {
         case .real(let account):
@@ -40,4 +47,16 @@ struct Wallet: Equatable, CustomStringConvertible {
     var description: String {
         type.description
     }
+
+    init(address: AlphaWallet.Address, origin: WalletOrigin) {
+        switch origin {
+        case .privateKey, .hd:
+            self.type = .real(address)
+        case .watch:
+            self.type = .watch(address)
+        }
+        self.origin = origin
+    }
 }
+
+extension Wallet: Hashable { }

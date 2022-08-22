@@ -28,7 +28,7 @@ class PromptBackupCoordinator: Coordinator {
     private let keystore: Keystore
     private let wallet: Wallet
     private let config: Config
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     //TODO this should be the total of mainnets instead of just Ethereum mainnet
     private var nativeCryptoCurrencyDollarValueInUsd: Double = 0
 
@@ -36,15 +36,14 @@ class PromptBackupCoordinator: Coordinator {
     var subtlePromptView: UIView?
     var coordinators: [Coordinator] = []
     private var cancelable = Set<AnyCancellable>()
-
     weak var prominentPromptDelegate: PromptBackupCoordinatorProminentPromptDelegate?
     weak var subtlePromptDelegate: PromptBackupCoordinatorSubtlePromptDelegate?
 
-    init(keystore: Keystore, wallet: Wallet, config: Config, analyticsCoordinator: AnalyticsCoordinator) {
+    init(keystore: Keystore, wallet: Wallet, config: Config, analytics: AnalyticsLogger) {
         self.keystore = keystore
         self.wallet = wallet
         self.config = config
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
     }
 
     func start() {
@@ -106,19 +105,14 @@ class PromptBackupCoordinator: Coordinator {
     }
 
     //TODO not the best way to watch Ether balance
-    func listenToNativeCryptoCurrencyBalance(withWalletSessions walletSessions: ServerDictionary<WalletSession>) {
-        guard let walletSession = walletSessions[safe: .main]  else { return }
-
-        let addressAndRPCServer = MultipleChainsTokensDataStore.functional.etherToken(forServer: .main).addressAndRPCServer
-        walletSession.tokenBalanceService
-            .tokenBalancePublisher(addressAndRPCServer)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] viewModel in
+    func listenToNativeCryptoCurrencyBalance(service: TokenViewModelState) {
+        let etherToken: Token = MultipleChainsTokensDataStore.functional.etherToken(forServer: .main)
+        service.tokenViewModelPublisher(for: etherToken)
+            .map { $0?.balance.currencyAmountWithoutSymbol ?? 0 }
+            .filter { !$0.isZero }
+            .sink { [weak self] dollarValue in
                 guard let strongSelf = self else { return }
-                let dollarValue = viewModel?.currencyAmountWithoutSymbol ?? 0
-                if !dollarValue.isZero {
-                    strongSelf.showCreateBackupAfterExceedThresholdPrompt(valueInUsd: dollarValue)
-                }
+                strongSelf.showCreateBackupAfterExceedThresholdPrompt(valueInUsd: dollarValue)
             }.store(in: &cancelable)
     }
 
@@ -378,7 +372,7 @@ extension PromptBackupCoordinator: PromptBackupWalletViewDelegate {
 
     func didChooseBackup(inView view: PromptBackupWalletView) {
         guard let nc = viewControllerToShowBackupLaterAlert(forView: view)?.navigationController else { return }
-        let coordinator = BackupCoordinator(navigationController: nc, keystore: keystore, account: wallet.address, analyticsCoordinator: analyticsCoordinator)
+        let coordinator = BackupCoordinator(navigationController: nc, keystore: keystore, account: wallet, analytics: analytics)
         coordinator.delegate = self
         coordinator.start()
         addCoordinator(coordinator)

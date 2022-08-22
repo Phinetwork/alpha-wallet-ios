@@ -7,13 +7,14 @@ class SendCoordinatorTests: XCTestCase {
 
     func testRootViewController() {
         let coordinator = SendCoordinator(
-            transactionType: .nativeCryptocurrency(TokenObject(), destination: .none, amount: nil),
+            transactionType: .nativeCryptocurrency(Token(), destination: .none, amount: nil),
             navigationController: FakeNavigationController(),
             session: .make(),
-            keystore: FakeKeystore(),
-            tokensDataStore: FakeTokensDataStore(),
+            keystore: FakeEtherKeystore(),
+            tokensService: WalletDataProcessingPipeline.make().pipeline,
             assetDefinitionStore: AssetDefinitionStore(),
-            analyticsCoordinator: FakeAnalyticsService()
+            analytics: FakeAnalyticsService(),
+            domainResolutionService: FakeDomainResolutionService()
         )
 
         coordinator.start()
@@ -24,13 +25,14 @@ class SendCoordinatorTests: XCTestCase {
     func testDestination() {
         let address: AlphaWallet.Address = .make()
         let coordinator = SendCoordinator(
-            transactionType: .nativeCryptocurrency(TokenObject(), destination: .init(address: address), amount: nil),
+            transactionType: .nativeCryptocurrency(Token(), destination: .init(address: address), amount: nil),
             navigationController: FakeNavigationController(),
             session: .make(),
-            keystore: FakeKeystore(),
-            tokensDataStore: FakeTokensDataStore(),
+            keystore: FakeEtherKeystore(),
+            tokensService: WalletDataProcessingPipeline.make().pipeline,
             assetDefinitionStore: AssetDefinitionStore(),
-            analyticsCoordinator: FakeAnalyticsService()
+            analytics: FakeAnalyticsService(),
+            domainResolutionService: FakeDomainResolutionService()
         )
         coordinator.start()
 

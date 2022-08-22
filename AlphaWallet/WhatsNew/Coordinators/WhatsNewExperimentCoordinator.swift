@@ -14,7 +14,7 @@ class WhatsNewExperimentCoordinator: Coordinator {
 
     private let navigationController: UINavigationController
     private let viewModel = HelpUsViewModel()
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private let userDefaults: UserDefaults
 
     var coordinators: [Coordinator] = []
@@ -30,11 +30,11 @@ class WhatsNewExperimentCoordinator: Coordinator {
         }
     }
 
-    init(navigationController: UINavigationController, userDefaults: UserDefaults, analyticsCoordinator: AnalyticsCoordinator) {
+    init(navigationController: UINavigationController, userDefaults: UserDefaults, analytics: AnalyticsLogger) {
         self.navigationController = navigationController
         self.navigationController.modalPresentationStyle = .formSheet
         self.userDefaults = userDefaults
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
     }
 
     func start() {
@@ -49,6 +49,7 @@ class WhatsNewExperimentCoordinator: Coordinator {
         hasRan = true
 
         let coordinator = WhatsNewListingCoordinator(navigationController: navigationController)
+        coordinator.delegate = self
         addCoordinator(coordinator)
         let listings = WhatsNewListing(listing: [
             WhatsNew(
@@ -60,12 +61,12 @@ class WhatsNewExperimentCoordinator: Coordinator {
                         "3. Type: wallet QR",
                     ])
         ])
-        coordinator.display(viewModel: .init(model: listings, title: R.string.localizable.whatsNew(), shouldShowCheckmarks: false), delegate: self)
+        coordinator.start(viewModel: .init(model: listings, title: R.string.localizable.whatsNew(), shouldShowCheckmarks: false))
     }
 }
 
 extension WhatsNewExperimentCoordinator: WhatsNewListingCoordinatorDelegate {
-    func didDismiss(controller: WhatsNewListingViewController) {
+    func didDismiss(in coordinator: WhatsNewListingCoordinator) {
         delegate?.didEnd(in: self)
     }
 }

@@ -1,41 +1,48 @@
 // Copyright © 2018 Stormbird PTE. LTD.
 
 import UIKit
-import PromiseKit
 import Combine
 
 protocol AccountsViewControllerDelegate: AnyObject {
     func didSelectAccount(account: Wallet, in viewController: AccountsViewController)
     func didDeleteAccount(account: Wallet, in viewController: AccountsViewController)
     func didSelectInfoForAccount(account: Wallet, sender: UIView, in viewController: AccountsViewController)
+    func didClose(in viewController: AccountsViewController)
 }
 
 class AccountsViewController: UIViewController {
+    private var cancelable = Set<AnyCancellable>()
+    private lazy var refreshControl: UIRefreshControl = {
+        let control = UIRefreshControl()
+        control.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
+        return control
+    }()
+    private let appear = PassthroughSubject<Void, Never>()
+    private let _pullToRefresh = PassthroughSubject<Void, Never>()
+    private let deleteWallet = PassthroughSubject<AccountsViewModel.WalletDeleteConfirmation, Never>()
+
     private let roundedBackground = RoundedBackground()
     private lazy var tableView: UITableView = {
         let tableView = UITableView(frame: .zero, style: .grouped)
         tableView.translatesAutoresizingMaskIntoConstraints = false
-        tableView.delegate = self
-        tableView.dataSource = self
         tableView.separatorStyle = .singleLine
-        tableView.backgroundColor = GroupedTable.Color.background
+        tableView.backgroundColor = viewModel.backgroundColor
         tableView.tableFooterView = UIView()
         tableView.rowHeight = UITableView.automaticDimension
         tableView.register(AccountViewCell.self)
         tableView.register(WalletSummaryTableViewCell.self)
-        tableView.addSubview(tableViewRefreshControl)
+        tableView.addSubview(refreshControl)
         return tableView
     }()
-    let viewModel: AccountsViewModel
-    private var cancelable = Set<AnyCancellable>()
 
+    let viewModel: AccountsViewModel
     weak var delegate: AccountsViewControllerDelegate?
 
     init(viewModel: AccountsViewModel) {
         self.viewModel = viewModel
         super.init(nibName: nil, bundle: nil)
 
-        roundedBackground.backgroundColor = GroupedTable.Color.background
+        roundedBackground.backgroundColor = viewModel.backgroundColor
         roundedBackground.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(roundedBackground)
         roundedBackground.addSubview(tableView)
@@ -44,31 +51,71 @@ class AccountsViewController: UIViewController {
             tableView.anchorsConstraintSafeArea(to: roundedBackground) +
             roundedBackground.createConstraintsWithContainer(view: view)
         )
-        bindViewModel()
     }
 
-    private func bindViewModel() {
-        viewModel.reloadBalancePublisher
-            .receive(on: RunLoop.main)
-            .sink { [weak tableViewRefreshControl] state in
-                switch state {
-                case .fetching:
-                    tableViewRefreshControl?.beginRefreshing()
-                case .done, .failure:
-                    tableViewRefreshControl?.endRefreshing()
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        bind(viewModel: viewModel)
+        tableView.delegate = self
+        tableView.dataSource = self
+    } 
+
+    private func bind(viewModel: AccountsViewModel) {
+        let input = AccountsViewModelInput(
+            appear: appear.eraseToAnyPublisher(),
+            pullToRefresh: _pullToRefresh.eraseToAnyPublisher(),
+            deleteWallet: deleteWallet.eraseToAnyPublisher())
+
+        let output = viewModel.transform(input: input)
+
+        output.viewState.sink { [weak self, weak tableView] state in
+            self?.title = state.navigationTitle
+            tableView?.reloadData()
+        }.store(in: &cancelable)
+
+        output.reloadBalanceState.sink { [weak refreshControl] state in
+            switch state {
+            case .fetching:
+                refreshControl?.beginRefreshing()
+            case .done, .failure:
+                refreshControl?.endRefreshing()
+            }
+        }.store(in: &cancelable)
+
+        output.deleteWalletState.sink { [weak self] data in
+            guard let strongSelf = self else { return }
+            switch data.state {
+            case .willDelete:
+                strongSelf.navigationController?.displayLoading(text: R.string.localizable.deleting())
+            case .didDelete:
+                strongSelf.navigationController?.hideLoading()
+                strongSelf.delegate?.didDeleteAccount(account: data.wallet, in: strongSelf)
+            case .none:
+                break
+            }
+        }.store(in: &cancelable)
+
+        output.askDeleteWalletConfirmation.sink { [weak self, deleteWallet] wallet in
+            guard let strongSelf = self else { return }
+
+            strongSelf.confirm(title: R.string.localizable.accountsConfirmDeleteTitle(),
+                    message: R.string.localizable.accountsConfirmDeleteMessage(),
+                    okTitle: R.string.localizable.accountsConfirmDeleteOkTitle(),
+                    okStyle: .destructive) { result in
+                switch result {
+                case .success:
+                    deleteWallet.send(.init(wallet: wallet, deleteConfirmed: true))
+                case .failure:
+                    deleteWallet.send(.init(wallet: wallet, deleteConfirmed: false))
                 }
-            }.store(in: &cancelable)
+            }
+        }.store(in: &cancelable)
     }
-
-    private lazy var tableViewRefreshControl: UIRefreshControl = {
-        let control = UIRefreshControl()
-        control.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
-        return control
-    }()
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        configure()
+        appear.send(())
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -81,49 +128,8 @@ class AccountsViewController: UIViewController {
         tableView.scrollToRow(at: indexPath, at: .top, animated: true)
     }
 
-    func configure() {
-        viewModel.reloadWallets()
-        title = viewModel.title
-        tableView.reloadData()
-    }
-
-    private func confirmDelete(account: Wallet) {
-        confirm(
-            title: R.string.localizable.accountsConfirmDeleteTitle(),
-            message: R.string.localizable.accountsConfirmDeleteMessage(),
-            okTitle: R.string.localizable.accountsConfirmDeleteOkTitle(),
-            okStyle: .destructive
-        ) { [weak self] result in
-            guard let strongSelf = self else { return }
-            switch result {
-            case .success:
-                strongSelf.delete(account: account)
-            case .failure: break
-            }
-        }
-    }
-
     @objc private func pullToRefresh(_ sender: UIRefreshControl) {
-        viewModel.reloadBalance()
-    }
-
-    private func delete(account: Wallet) {
-        navigationController?.displayLoading(text: R.string.localizable.deleting())
-        let result = viewModel.delete(account: account)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let strongSelf = self else { return }
-
-            strongSelf.navigationController?.hideLoading()
-
-            switch result {
-            case .success:
-                self?.configure()
-                strongSelf.delegate?.didDeleteAccount(account: account, in: strongSelf)
-            case .failure(let error):
-                strongSelf.displayError(error: error)
-            }
-        }
+        _pullToRefresh.send(())
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -131,12 +137,10 @@ class AccountsViewController: UIViewController {
     }
 }
 
-// MARK: - TableView Data Source
-
 extension AccountsViewController: UITableViewDataSource {
 
     public func numberOfSections(in tableView: UITableView) -> Int {
-        return viewModel.sections.count
+        return viewModel.numberOfSections
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -144,19 +148,19 @@ extension AccountsViewController: UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        switch viewModel.sections[indexPath.section] {
-        case .hdWallet, .keystoreWallet, .watchedWallet:
-            guard let viewModel = viewModel.accountViewModel(forIndexPath: indexPath) else { return UITableViewCell() }
-
+        switch viewModel.viewModel(at: indexPath) {
+        case .undefined:
+            return UITableViewCell()
+        case .wallet(let viewModel):
             let cell: AccountViewCell = tableView.dequeueReusableCell(for: indexPath)
-            cell.configure(viewModel: viewModel)
+            cell.bind(viewModel: viewModel)
 
             addLongPressGestureRecognizer(toView: cell)
 
             return cell
-        case .summary:
+        case .summary(let viewModel):
             let cell: WalletSummaryTableViewCell = tableView.dequeueReusableCell(for: indexPath)
-            cell.configure(viewModel: viewModel.walletSummaryViewModel)
+            cell.configure(viewModel: viewModel)
 
             return cell
         }
@@ -168,10 +172,6 @@ extension AccountsViewController: UITableViewDataSource {
         view.addGestureRecognizer(gesture)
     }
 
-    func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
-        return viewModel.canEditCell(indexPath: indexPath)
-    }
-
     @objc private func didLongPress(_ recognizer: UILongPressGestureRecognizer) {
         guard let cell = recognizer.view as? AccountViewCell, let indexPath = cell.indexPath, recognizer.state == .began else { return }
         guard let account = viewModel.account(for: indexPath) else { return }
@@ -180,12 +180,16 @@ extension AccountsViewController: UITableViewDataSource {
     }
 }
 
+extension AccountsViewController: PopNotifiable {
+    func didPopViewController(animated: Bool) {
+        delegate?.didClose(in: self)
+    }
+}
 // MARK: - TableView Delegate
-
 extension AccountsViewController: UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
-        return viewModel.shouldHideHeader(in: section).shouldHide ? .leastNormalMagnitude : UITableView.automaticDimension
+        return viewModel.heightForHeader(in: section)
     }
 
     public func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
@@ -205,30 +209,7 @@ extension AccountsViewController: UITableViewDelegate {
     }
 
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-
-        let copyAction = UIContextualAction(style: .normal, title: R.string.localizable.copyAddress()) { _, _, complete in
-            guard let account = self.viewModel.account(for: indexPath) else { return }
-            UIPasteboard.general.string = account.address.eip55String
-            complete(true)
-        }
-
-        copyAction.image = R.image.copy()?.withRenderingMode(.alwaysTemplate)
-        copyAction.backgroundColor = R.color.azure()
-
-        let deleteAction = UIContextualAction(style: .normal, title: R.string.localizable.accountsConfirmDeleteAction()) { _, _, complete in
-            guard let account = self.viewModel.account(for: indexPath) else { return }
-            self.confirmDelete(account: account)
-
-            complete(true)
-        }
-
-        deleteAction.image = R.image.close()?.withRenderingMode(.alwaysTemplate)
-        deleteAction.backgroundColor = R.color.danger()
-
-        let configuration = UISwipeActionsConfiguration(actions: [copyAction, deleteAction])
-        configuration.performsFirstActionWithFullSwipe = true
-
-        return configuration
+        return viewModel.trailingSwipeActionsConfiguration(for: indexPath)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

@@ -8,6 +8,7 @@
 import UIKit
 import PromiseKit
 import CryptoSwift
+import Combine
 
 class AddressOrEnsNameLabel: UILabel {
 
@@ -25,15 +26,24 @@ class AddressOrEnsNameLabel: UILabel {
         }
     }
 
-    private var inResolvingState: Bool = false {
+    private let domainResolutionService: DomainResolutionServiceType
+
+    private var currentlyResolving: (value: String, promise: Promise<BlockieAndAddressOrEnsResolution>)? {
         didSet {
-            if inResolvingState && shouldShowLoadingIndicator {
-                loadingIndicator.startAnimating()
-            } else if requestsIdsStore.isEmpty {
+            guard shouldShowLoadingIndicator else {
                 loadingIndicator.stopAnimating()
+                return
+            }
+
+            if currentlyResolving == nil {
+                loadingIndicator.stopAnimating()
+            } else {
+                loadingIndicator.startAnimating()
             }
         }
     }
+
+    private var cancelable: AnyCancellable?
 
     let loadingIndicator: UIActivityIndicatorView = {
         let indicator = UIActivityIndicatorView(style: .medium)
@@ -80,7 +90,15 @@ class AddressOrEnsNameLabel: UILabel {
     var addressFormat: AddressFormat = .truncateMiddle
     var shouldShowLoadingIndicator: Bool = false
 
-    init() {
+    var blockieImage: BlockiesImage? {
+        didSet {
+            blockieImageView.image = blockieImage
+            blockieImageView.isHidden = blockieImage == nil
+        }
+    }
+
+    init(domainResolutionService: DomainResolutionServiceType) {
+        self.domainResolutionService = domainResolutionService
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         numberOfLines = 0
@@ -105,56 +123,51 @@ class AddressOrEnsNameLabel: UILabel {
     func clear() {
         blockieImage = nil
         addressOrEnsName = nil
-        inResolvingState = false
+        currentlyResolving = nil
     }
-
-    var blockieImage: BlockiesImage? {
-        didSet {
-            blockieImageView.image = blockieImage
-            blockieImageView.isHidden = blockieImage == nil
-        }
-    }
-
-    // NOTE: caching ids for call `func resolve(_ value: String)` function, for verifying activity state
-    // adds a new id once function get called, and removes once resolve a value.
-    private var requestsIdsStore: Set<String> = .init()
 
     func resolve(_ value: String) -> Promise<BlockieAndAddressOrEnsResolution> {
-        let id = UUID().uuidString
-        requestsIdsStore.insert(id)
+        let valueArg = value
+
+        if let currentlyResolving = currentlyResolving, currentlyResolving.value == value {
+            return currentlyResolving.promise
+        }
         clear()
 
-        return Promise<BlockieAndAddressOrEnsResolution> { seal in
+        let promise = Promise<BlockieAndAddressOrEnsResolution> { seal in
             if let address = AlphaWallet.Address(string: value) {
-                inResolvingState = true
-
-                DomainResolutionService()
-                    .resolveEns(address: address)
-                    .done { value in
-                        // NOTE: improve loading indicator hidding
-                        self.requestsIdsStore.removeAll()
-                        seal.fulfill(value)
-                    }.catch { _ in
+                cancelable?.cancel()
+                cancelable = domainResolutionService.resolveEnsAndBlockie(address: address)
+                    .sink(receiveCompletion: { _ in
                         seal.fulfill((nil, .resolved(.none)))
-                    }
+                    }, receiveValue: { value in
+                        self.clearCurrentlyResolvingIf(value: valueArg)
+                        seal.fulfill(value)
+                    })
             } else if value.contains(".") {
-                inResolvingState = true
-
-                DomainResolutionService()
-                    .resolveAddress(string: value)
-                    .done { value in
-                        self.requestsIdsStore.removeAll()
-                        seal.fulfill(value)
-                    }.catch { _ in
+                cancelable?.cancel()
+                cancelable = domainResolutionService.resolveAddressAndBlockie(string: value)
+                    .sink(receiveCompletion: { _ in
                         seal.fulfill((nil, .resolved(.none)))
-                    }
+                    }, receiveValue: { value in
+                        self.clearCurrentlyResolvingIf(value: valueArg)
+                        seal.fulfill(value)
+                    })
             } else {
                 seal.fulfill((nil, .resolved(.none)))
             }
         }.ensure {
-            self.requestsIdsStore.remove(id)
+            self.clearCurrentlyResolvingIf(value: valueArg)
+        }
+        currentlyResolving = (value, promise)
+        return promise
+    }
 
-            self.inResolvingState = false
+    private func clearCurrentlyResolvingIf(value: String) {
+        if let currentlyResolving = currentlyResolving, currentlyResolving.value == value {
+            self.currentlyResolving = nil
+        } else {
+            //no-op
         }
     }
 }

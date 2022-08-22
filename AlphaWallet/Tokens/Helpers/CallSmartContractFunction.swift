@@ -2,6 +2,7 @@
 
 import Foundation
 import PromiseKit
+import Result
 import web3swift
 
 //TODO time to wrap `callSmartContract` with a class
@@ -22,20 +23,24 @@ private let web3Queue: OperationQueue = {
 
 private func createWeb3(webProvider: Web3HttpProvider, forServer server: RPCServer) -> web3 {
     var requestDispatcher: JSONRPCrequestDispatcher
+    //TODO change to switch statement
     if server == .klaytnCypress || server == .klaytnBaobabTestnet {
         requestDispatcher = JSONRPCrequestDispatcher(provider: webProvider, queue: web3Queue.underlyingQueue!, policy: .NoBatching)
+    } else if server == .xDai {
+        requestDispatcher = JSONRPCrequestDispatcher(provider: webProvider, queue: web3Queue.underlyingQueue!, policy: .Batch(6))
     } else {
         requestDispatcher = JSONRPCrequestDispatcher(provider: webProvider, queue: web3Queue.underlyingQueue!, policy: .Batch(32))
     }
 
     return web3swift.web3(provider: webProvider, queue: web3Queue, requestDispatcher: requestDispatcher)
-} 
+}
 
 func getCachedWeb3(forServer server: RPCServer, timeout: TimeInterval) throws -> web3 {
     if let result = web3s[server]?[timeout] {
         return result
     } else {
-        guard let webProvider = Web3HttpProvider(server.rpcURL, network: server.web3Network) else {
+        let rpcHeaders = server.rpcHeaders
+        guard let webProvider = Web3HttpProvider(server.rpcURL, headers: rpcHeaders, network: server.web3Network) else {
             throw Web3Error(description: "Error creating web provider for: \(server.rpcURL) + \(server.web3Network)")
         }
         let configuration = webProvider.session.configuration
@@ -58,7 +63,8 @@ func getCachedWeb3(forServer server: RPCServer, timeout: TimeInterval) throws ->
 
 private let callSmartContractQueue = DispatchQueue(label: "com.callSmartContractQueue.updateQueue")
 //`shouldDelayIfCached` is a hack for TokenScript views
-func callSmartContract(withServer server: RPCServer, contract: AlphaWallet.Address, functionName: String, abiString: String, parameters: [AnyObject] = [], timeout: TimeInterval? = nil, shouldDelayIfCached: Bool = false, queue: DispatchQueue? = nil) -> Promise<[String: Any]> {
+//TODO should trap 429 from RPC node
+func callSmartContract(withServer server: RPCServer, contract: AlphaWallet.Address, functionName: String, abiString: String, parameters: [AnyObject] = [], shouldDelayIfCached: Bool = false, queue: DispatchQueue? = nil) -> Promise<[String: Any]> {
     let timeout: TimeInterval = 60
     //We must include the ABI string in the key because the order of elements in a dictionary when serialized in the string is not ordered. Parameters (which is ordered) should ensure it's the same function
     let cacheKey = "\(contract).\(functionName) \(parameters) \(server.chainID)"
@@ -100,9 +106,22 @@ func callSmartContract(withServer server: RPCServer, contract: AlphaWallet.Addre
             }
 
             //callPromise() creates a promise. It doesn't "call" a promise. Bad name
-            promiseCreator.callPromise(options: nil).done(on: queue ?? .main, { d in
+            firstly {
+                promiseCreator.callPromise(options: nil)
+            }.done(on: queue ?? .main, { d in
                 seal.fulfill(d)
             }).catch(on: queue ?? .main, { e in
+                if let e  = e as? web3swift.Web3Error {
+                    switch e {
+                    case .rateLimited:
+                        warnLog("[API] Rate limited by RPC node server: \(server)")
+                    case .transactionSerializationError, .connectionError, .dataError, .walletError, .inputError, .nodeError, .processingError, .keystoreError, .generalError, .unknownError:
+                        //no-op. We only want to log rate limit errors above
+                        break
+                    }
+                } else {
+                    //no-op
+                }
                 seal.reject(e)
             })
         }
@@ -112,7 +131,7 @@ func callSmartContract(withServer server: RPCServer, contract: AlphaWallet.Addre
     return result
 }
 
-func getSmartContractCallData(withServer server: RPCServer, contract: AlphaWallet.Address, functionName: String, abiString: String, parameters: [AnyObject] = [], timeout: TimeInterval? = nil) -> Data? {
+func getSmartContractCallData(withServer server: RPCServer, contract: AlphaWallet.Address, functionName: String, abiString: String, parameters: [AnyObject] = []) -> Data? {
     //TODO should be extracted. Duplicated
     let timeout: TimeInterval = 60
     guard let web3 = try? getCachedWeb3(forServer: server, timeout: timeout) else { return nil }
@@ -141,4 +160,12 @@ func getEventLogs(
     }
 
     return contractInstance.getIndexedEventsPromise(eventName: eventName, filter: filter)
+        .recover { error -> Promise<[EventParserResultProtocol]> in
+            debugLog("[eth_getLogs] failure for server: \(server) with error: \(error)")
+            return .init(error: error)
+        }
+}
+
+func createSmartContractCallError(forContract contract: AlphaWallet.Address, functionName: String) -> AnyError {
+    AnyError(Web3Error(description: "Error extracting result from \(contract.eip55String).\(functionName)()"))
 }

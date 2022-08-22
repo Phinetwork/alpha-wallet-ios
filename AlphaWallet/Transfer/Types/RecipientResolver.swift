@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 
 class RecipientResolver {
     enum Row: Int, CaseIterable {
@@ -22,25 +23,25 @@ class RecipientResolver {
         }
         return false
     }
-    private let resolver: DomainResolutionServiceType = DomainResolutionService()
-    
-    init(address: AlphaWallet.Address?) {
+    private let domainResolutionService: DomainResolutionServiceType
+
+    init(address: AlphaWallet.Address?, domainResolutionService: DomainResolutionServiceType) {
         self.address = address
-    }
+        self.domainResolutionService = domainResolutionService
+    } 
 
-    func resolve(completion: @escaping () -> Void) {
-        guard let address = address else { return }
-        resolver.resolveEns(address: address).done { [weak self] result in
-            guard let strongSelf = self else { return }
-
-            strongSelf.ensName = result.resolution.value
-            completion()
-        }.catch { [weak self] _ in
-            guard let strongSelf = self else { return }
-
-            strongSelf.ensName = nil
-            completion()
+    func resolveRecipient() -> AnyPublisher<Void, Never> {
+        guard let address = address else {
+            return .just(())
         }
+
+        return domainResolutionService.resolveEns(address: address)
+            .map { ens -> EnsName? in return ens }
+            .replaceError(with: nil)
+            .handleEvents(receiveOutput: { [weak self] ensName in
+                self?.ensName = ensName
+            }).mapToVoid()
+            .eraseToAnyPublisher()
     }
 
     var value: String? {

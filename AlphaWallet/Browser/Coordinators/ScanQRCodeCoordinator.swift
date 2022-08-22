@@ -11,8 +11,8 @@ protocol ScanQRCodeCoordinatorDelegate: AnyObject {
 }
 
 final class ScanQRCodeCoordinator: NSObject, Coordinator {
-    private let analyticsCoordinator: AnalyticsCoordinator
-    private lazy var navigationController = UINavigationController(rootViewController: qrcodeController)
+    private let analytics: AnalyticsLogger
+    private lazy var navigationController = NavigationController(rootViewController: qrcodeController)
     private lazy var reader = QRCodeReader(metadataObjectTypes: [AVMetadataObject.ObjectType.qr])
     private lazy var qrcodeController: QRCodeReaderViewController = {
         let shouldShowMyQRCodeButton = account != nil
@@ -40,14 +40,16 @@ final class ScanQRCodeCoordinator: NSObject, Coordinator {
         return controller
     }()
     private let account: Wallet?
+    private let domainResolutionService: DomainResolutionServiceType
 
     let parentNavigationController: UINavigationController
     var coordinators: [Coordinator] = []
     weak var delegate: ScanQRCodeCoordinatorDelegate?
 
-    init(analyticsCoordinator: AnalyticsCoordinator, navigationController: UINavigationController, account: Wallet?) {
-        self.analyticsCoordinator = analyticsCoordinator
+    init(analytics: AnalyticsLogger, navigationController: UINavigationController, account: Wallet?, domainResolutionService: DomainResolutionServiceType) {
+        self.analytics = analytics
         self.account = account
+        self.domainResolutionService = domainResolutionService
         self.parentNavigationController = navigationController
     }
 
@@ -59,7 +61,7 @@ final class ScanQRCodeCoordinator: NSObject, Coordinator {
 
     @objc private func dismiss() {
         stopScannerAndDismiss {
-            self.analyticsCoordinator.log(action: Analytics.Action.cancelScanQrCode)
+            self.analytics.log(action: Analytics.Action.cancelScanQrCode)
             self.delegate?.didCancel(in: self)
         }
     }
@@ -74,13 +76,14 @@ extension ScanQRCodeCoordinator: QRCodeReaderDelegate {
 
     func readerDidCancel(_ reader: QRCodeReaderViewController!) {
         stopScannerAndDismiss {
-            self.analyticsCoordinator.log(action: Analytics.Action.cancelScanQrCode)
+            self.analytics.log(action: Analytics.Action.cancelScanQrCode)
             self.delegate?.didCancel(in: self)
         }
     }
 
     func reader(_ reader: QRCodeReaderViewController!, didScanResult result: String!) {
         stopScannerAndDismiss {
+            infoLog("[QR Code] Scanned value: \(String(describing: result))")
             self.logCompleteScan(result: result)
             self.delegate?.didScan(result: result, in: self)
         }
@@ -89,7 +92,7 @@ extension ScanQRCodeCoordinator: QRCodeReaderDelegate {
     func reader(_ reader: QRCodeReaderViewController!, myQRCodeSelected sender: UIButton!) {
         //Showing QR code functionality is not available if there's no account, specifically when importing wallet during onboarding
         guard let account = account else { return }
-        let coordinator = RequestCoordinator(navigationController: navigationController, account: account)
+        let coordinator = RequestCoordinator(navigationController: navigationController, account: account, domainResolutionService: domainResolutionService)
         coordinator.delegate = self
         coordinator.start()
         addCoordinator(coordinator)
@@ -109,7 +112,7 @@ extension ScanQRCodeCoordinator: RequestCoordinatorDelegate {
 extension ScanQRCodeCoordinator {
     private func logCompleteScan(result: String) {
         let resultType = convertToAnalyticsResultType(value: result)
-        analyticsCoordinator.log(action: Analytics.Action.completeScanQrCode, properties: [Analytics.Properties.resultType.rawValue: resultType.rawValue])
+        analytics.log(action: Analytics.Action.completeScanQrCode, properties: [Analytics.Properties.resultType.rawValue: resultType.rawValue])
     }
 
     private func convertToAnalyticsResultType(value: String!) -> Analytics.ScanQRCodeResultType {
@@ -141,6 +144,6 @@ extension ScanQRCodeCoordinator {
     }
 
     private func logStartScan(source: Analytics.ScanQRCodeSource) {
-        analyticsCoordinator.log(navigation: Analytics.Navigation.scanQrCode, properties: [Analytics.Properties.source.rawValue: source.rawValue])
+        analytics.log(navigation: Analytics.Navigation.scanQrCode, properties: [Analytics.Properties.source.rawValue: source.rawValue])
     }
 }

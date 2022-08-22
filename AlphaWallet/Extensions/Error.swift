@@ -19,6 +19,7 @@ extension web3swift.Web3Error: LocalizedError {
         case .keystoreError(let e): return e.localizedDescription
         case .generalError(let e): return e.localizedDescription
         case .unknownError: return "Unknown Error"
+        case .rateLimited: return "Rate limited"
         }
     }
 }
@@ -26,6 +27,12 @@ extension web3swift.Web3Error: LocalizedError {
 extension Error {
     var prettyError: String {
         switch self {
+        case let error as WalletApiService.WalletApiServiceError:
+            return error.localizedDescription
+        case let error as FunctionError:
+            return error.localizedDescription
+        case let error as TransactionConfiguratorError:
+            return error.localizedDescription
         case let error as WalletConnectCoordinator.RequestCanceledDueToWatchWalletError:
             return error.localizedDescription
         case let error as AnyError:

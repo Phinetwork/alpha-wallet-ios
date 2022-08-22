@@ -15,11 +15,11 @@ class SendCoordinator: Coordinator {
     private let transactionType: TransactionType
     private let session: WalletSession
     private let keystore: Keystore
-    private let tokensDataStore: TokensDataStore
+    private let tokensService: TokenProvidable & TokenAddable & TokenViewModelState & TokenBalanceRefreshable
     private let assetDefinitionStore: AssetDefinitionStore
-    private let analyticsCoordinator: AnalyticsCoordinator
-    private var confirmResult: ConfirmResult? = .none
-    private var lastViewControllerInNavigationStack: UIViewController?
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
+    private var transactionConfirmationResult: ConfirmResult? = .none
 
     let navigationController: UINavigationController
     var coordinators: [Coordinator] = []
@@ -34,32 +34,33 @@ class SendCoordinator: Coordinator {
             navigationController: UINavigationController,
             session: WalletSession,
             keystore: Keystore,
-            tokensDataStore: TokensDataStore,
+            tokensService: TokenProvidable & TokenAddable & TokenViewModelState & TokenBalanceRefreshable,
             assetDefinitionStore: AssetDefinitionStore,
-            analyticsCoordinator: AnalyticsCoordinator
+            analytics: AnalyticsLogger,
+            domainResolutionService: DomainResolutionServiceType
     ) {
         self.transactionType = transactionType
         self.navigationController = navigationController
         self.session = session
         self.keystore = keystore
-        self.tokensDataStore = tokensDataStore
+        self.tokensService = tokensService
         self.assetDefinitionStore = assetDefinitionStore
-        self.analyticsCoordinator = analyticsCoordinator
-
-        self.lastViewControllerInNavigationStack = navigationController.viewControllers.last
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
     }
 
     func start() {
-        sendViewController.configure(viewModel: .init(transactionType: sendViewController.transactionType, session: session, tokensDataStore: tokensDataStore))
+        sendViewController.configure(viewModel: .init(transactionType: sendViewController.transactionType, session: session, service: tokensService))
 
         navigationController.pushViewController(sendViewController, animated: true)
     }
-
+    
     private func makeSendViewController() -> SendViewController {
         let controller = SendViewController(
             session: session,
-            tokensDataStore: tokensDataStore,
-            transactionType: transactionType
+            service: tokensService,
+            transactionType: transactionType,
+            domainResolutionService: domainResolutionService
         )
 
         switch transactionType {
@@ -78,16 +79,9 @@ class SendCoordinator: Coordinator {
         }
         controller.delegate = self
         controller.navigationItem.largeTitleDisplayMode = .never
-        controller.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(self, selector: #selector(dismiss))
 
         return controller
-    }
-
-    @objc private func dismiss() {
-        removeAllCoordinators()
-
-        delegate?.didCancel(in: self)
-    }
+    } 
 }
 
 extension SendCoordinator: ScanQRCodeCoordinatorDelegate {
@@ -102,30 +96,38 @@ extension SendCoordinator: ScanQRCodeCoordinatorDelegate {
 }
 
 extension SendCoordinator: SendViewControllerDelegate {
-    func openQRCode(in controller: SendViewController) {
+    func didClose(in viewController: SendViewController) {
+        delegate?.didCancel(in: self)
+    }
+
+    func openQRCode(in viewController: SendViewController) {
         guard navigationController.ensureHasDeviceAuthorization() else { return }
 
-        let coordinator = ScanQRCodeCoordinator(analyticsCoordinator: analyticsCoordinator, navigationController: navigationController, account: session.account)
+        let coordinator = ScanQRCodeCoordinator(analytics: analytics, navigationController: navigationController, account: session.account, domainResolutionService: domainResolutionService)
         coordinator.delegate = self
         addCoordinator(coordinator)
         coordinator.start(fromSource: .sendFungibleScreen)
     }
 
     func didPressConfirm(transaction: UnconfirmedTransaction, in viewController: SendViewController, amount: String, shortValue: String?) {
-        let configuration: TransactionConfirmationConfiguration = .sendFungiblesTransaction(
-            confirmType: .signThenSend,
-            keystore: keystore,
-            assetDefinitionStore: assetDefinitionStore,
-            amount: FungiblesTransactionAmount(value: amount, shortValue: shortValue, isAllFunds: viewController.isAllFunds)
-        )
-        let coordinator = TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: configuration, analyticsCoordinator: analyticsCoordinator)
-        addCoordinator(coordinator)
-        coordinator.delegate = self
-        coordinator.start(fromSource: .sendFungible)
+        do {
+            let configuration: TransactionConfirmationViewModel.Configuration = .sendFungiblesTransaction(
+                confirmType: .signThenSend,
+                amount: FungiblesTransactionAmount(value: amount, shortValue: shortValue, isAllFunds: viewController.isAllFunds))
+
+            let coordinator = try TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: configuration, analytics: analytics, domainResolutionService: domainResolutionService, keystore: keystore, assetDefinitionStore: assetDefinitionStore, tokensService: tokensService)
+            addCoordinator(coordinator)
+            coordinator.delegate = self
+            coordinator.start(fromSource: .sendFungible)
+        } catch {
+            UIApplication.shared
+                .presentedViewController(or: navigationController)
+                .displayError(message: error.prettyError)
+        }
     }
 
     func lookup(contract: AlphaWallet.Address, in viewController: SendViewController, completion: @escaping (ContractData) -> Void) {
-        ContractDataDetector(address: contract, account: session.account, server: session.server, assetDefinitionStore: assetDefinitionStore).fetch(completion: completion)
+        ContractDataDetector(address: contract, account: session.account, server: session.server, assetDefinitionStore: assetDefinitionStore, analytics: analytics).fetch(completion: completion)
     }
 }
 
@@ -146,7 +148,7 @@ extension SendCoordinator: TransactionConfirmationCoordinatorDelegate {
 
             strongSelf.removeCoordinator(coordinator)
 
-            strongSelf.confirmResult = result
+            strongSelf.transactionConfirmationResult = result
 
             let coordinator = TransactionInProgressCoordinator(presentingViewController: strongSelf.navigationController)
             coordinator.delegate = strongSelf
@@ -170,13 +172,8 @@ extension SendCoordinator: TransactionInProgressCoordinatorDelegate {
     func didDismiss(in coordinator: TransactionInProgressCoordinator) {
         removeCoordinator(coordinator)
 
-        switch confirmResult {
-        case .some(let result):
-            let _ = lastViewControllerInNavigationStack.flatMap { navigationController.popToViewController($0, animated: true) }
-            delegate?.didFinish(result, in: self)
-        case .none:
-            break
-        }
+        guard case .some(let result) = transactionConfirmationResult else { return }
+        delegate?.didFinish(result, in: self)
     }
 }
 

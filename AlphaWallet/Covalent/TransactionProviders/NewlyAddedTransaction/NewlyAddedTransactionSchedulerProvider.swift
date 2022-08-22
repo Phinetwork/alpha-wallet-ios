@@ -54,6 +54,7 @@ final class NewlyAddedTransactionSchedulerProvider: SchedulerProvider {
 
         return provider
             .transactions(walletAddress: session.account.address, server: session.server, page: lastPage, pageSize: Constants.Covalent.newlyAddedTransactionsPerPage)
+            .retry(times: 3)
             .subscribe(on: fetchNewlyAddedTransactionsQueue)
             .handleEvents(receiveOutput: { [weak self] response in
                 self?.didReceiveValue(response: response)
@@ -61,7 +62,7 @@ final class NewlyAddedTransactionSchedulerProvider: SchedulerProvider {
                 guard case .failure(let e) = result else { return }
                 self?.didReceiveError(error: e)
             })
-            .map { _ in }
+            .mapToVoid()
             .mapError { SchedulerError.covalentError($0) }
             .eraseToAnyPublisher()
     }
@@ -102,9 +103,11 @@ extension Config {
 extension Covalent.NetworkProvider {
     static func isSupport(server: RPCServer) -> Bool {
         switch server {
-        case .main, .classic, .callisto, .kovan, .ropsten, .custom, .rinkeby, .poa, .sokol, .goerli, .xDai, .artis_sigma1, .binance_smart_chain, .binance_smart_chain_testnet, .artis_tau1, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnBaobabTestnet:
+        case .main, .classic, .callisto, .kovan, .ropsten, .custom, .rinkeby, .poa, .sokol, .goerli, .xDai, .artis_sigma1, .binance_smart_chain, .binance_smart_chain_testnet, .artis_tau1, .heco, .heco_testnet, .fantom, .fantom_testnet, .avalanche, .avalanche_testnet, .polygon, .mumbai_testnet, .optimistic, .optimisticKovan, .cronosTestnet, .arbitrum, .arbitrumRinkeby, .palm, .palmTestnet, .klaytnBaobabTestnet, .phi:
             return false
         case .klaytnCypress:
+            return true
+        case .ioTeX, .ioTeXTestnet:
             return true
         }
     }

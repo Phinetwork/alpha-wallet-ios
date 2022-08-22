@@ -18,22 +18,20 @@ protocol TokenScriptCoordinatorDelegate: CanOpenURL, SendTransactionDelegate {
 
 class TokenScriptCoordinator: Coordinator {
     private lazy var viewController: TokenInstanceActionViewController = {
-        return makeTokenInstanceActionViewController(token: tokenObject, for: tokenHolder, action: action)
+        return makeTokenInstanceActionViewController(token: token, for: tokenHolder, action: action)
     }()
-    
+
     private let keystore: Keystore
-    private let tokenObject: TokenObject
+    private let token: Token
     private let session: WalletSession
     private let assetDefinitionStore: AssetDefinitionStore
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
+    private let domainResolutionService: DomainResolutionServiceType
     private let tokenHolder: TokenHolder
     private var transactionConfirmationResult: ConfirmResult? = .none
     private let action: TokenInstanceAction
-    private let tokensStorage: TokensDataStore
-    private let eventsDataStore: NonActivityEventsDataStore
-    private var lastViewControllerInNavigationStack: UIViewController?
     private var cancelable = Set<AnyCancellable>()
-
+    private let tokensService: TokenViewModelState
     weak var delegate: TokenScriptCoordinatorDelegate?
     let navigationController: UINavigationController
     var coordinators: [Coordinator] = []
@@ -43,76 +41,54 @@ class TokenScriptCoordinator: Coordinator {
             navigationController: UINavigationController,
             keystore: Keystore,
             tokenHolder: TokenHolder,
-            tokensStorage: TokensDataStore,
-            tokenObject: TokenObject,
+            tokenObject: Token,
             assetDefinitionStore: AssetDefinitionStore,
-            analyticsCoordinator: AnalyticsCoordinator,
+            analytics: AnalyticsLogger,
+            domainResolutionService: DomainResolutionServiceType,
             action: TokenInstanceAction,
-            eventsDataStore: NonActivityEventsDataStore
+            tokensService: TokenViewModelState
     ) {
-        self.eventsDataStore = eventsDataStore
+        self.tokensService = tokensService
         self.action = action
         self.tokenHolder = tokenHolder
         self.session = session
         self.keystore = keystore
         self.navigationController = navigationController
-        self.tokenObject = tokenObject
+        self.token = tokenObject
         self.assetDefinitionStore = assetDefinitionStore
-        self.analyticsCoordinator = analyticsCoordinator
-        self.tokensStorage = tokensStorage
+        self.analytics = analytics
+        self.domainResolutionService = domainResolutionService
         navigationController.navigationBar.isTranslucent = false
-        self.lastViewControllerInNavigationStack = navigationController.viewControllers.last
     }
 
     func start() {
         viewController.navigationItem.largeTitleDisplayMode = .never
-        viewController.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(self, selector: #selector(dismiss))
         navigationController.pushViewController(viewController, animated: true)
 
         subscribeForEthereumEventChanges()
     }
 
-    @objc private func dismiss() {
-        removeAllCoordinators()
-
-        delegate?.didCancel(in: self)
-    }
-
-    private func makeTokenInstanceActionViewController(token: TokenObject, for tokenHolder: TokenHolder, action: TokenInstanceAction) -> TokenInstanceActionViewController {
-        let vc = TokenInstanceActionViewController(analyticsCoordinator: analyticsCoordinator, tokenObject: tokenObject, tokenHolder: tokenHolder, tokensStorage: tokensStorage, assetDefinitionStore: assetDefinitionStore, action: action, session: session, keystore: keystore)
+    private func makeTokenInstanceActionViewController(token: Token, for tokenHolder: TokenHolder, action: TokenInstanceAction) -> TokenInstanceActionViewController {
+        let vc = TokenInstanceActionViewController(analytics: analytics, token: token, tokenHolder: tokenHolder, assetDefinitionStore: assetDefinitionStore, action: action, session: session, keystore: keystore)
         vc.delegate = self
         vc.configure()
 
         return vc
     }
-
+    //FIXME: Move to view model
     private func subscribeForEthereumEventChanges() {
-        eventsDataStore
-            .recentEvents(forTokenContract: tokenObject.contractAddress)
-            .filter({ changeset in
-                switch changeset {
-                case .update(let events, _, let insertions, let modifications):
-                    return !insertions.map { events[$0] }.isEmpty || !modifications.map { events[$0] }.isEmpty
-                case .initial, .error:
-                    return false
-                }
-            })
-            .receive(on: DispatchQueue.main)
-            .sink(receiveValue: { [weak self] _ in
-                self?.viewController.configure()
-            }).store(in: &cancelable)
-
-        assetDefinitionStore
-            .assetsSignatureOrBodyChange(for: tokenObject.contractAddress)
-            .receive(on: DispatchQueue.main)
-            .sink(receiveValue: { [weak self] _ in
-                self?.viewController.configure()
-            }).store(in: &cancelable)
+        tokensService.tokenViewModelPublisher(for: token).sink { [weak self] _ in
+            self?.viewController.configure()
+        }.store(in: &cancelable)
     }
 }
 
 extension TokenScriptCoordinator: TokenInstanceActionViewControllerDelegate {
-    
+
+    func didClose(in viewController: TokenInstanceActionViewController) {
+        delegate?.didCancel(in: self)
+    }
+
     func didPressViewContractWebPage(forContract contract: AlphaWallet.Address, server: RPCServer, in viewController: UIViewController) {
         delegate?.didPressViewContractWebPage(forContract: contract, server: server, in: viewController)
     }
@@ -125,18 +101,19 @@ extension TokenScriptCoordinator: TokenInstanceActionViewControllerDelegate {
         delegate?.didPressOpenWebPage(url, in: viewController)
     }
 
-    func confirmTransactionSelected(in viewController: TokenInstanceActionViewController, tokenObject: TokenObject, contract: AlphaWallet.Address, tokenId: TokenId, values: [AttributeId: AssetInternalValue], localRefs: [AttributeId: AssetInternalValue], server: RPCServer, session: WalletSession, keystore: Keystore, transactionFunction: FunctionOrigin) {
+    func confirmTransactionSelected(in viewController: TokenInstanceActionViewController, token: Token, contract: AlphaWallet.Address, tokenId: TokenId, values: [AttributeId: AssetInternalValue], localRefs: [AttributeId: AssetInternalValue], server: RPCServer, session: WalletSession, keystore: Keystore, transactionFunction: FunctionOrigin) {
         guard let navigationController = viewController.navigationController else { return }
 
-        switch transactionFunction.makeUnConfirmedTransaction(withTokenObject: tokenObject, tokenId: tokenId, attributeAndValues: values, localRefs: localRefs, server: server, session: session) {
-        case .success((let transaction, let functionCallMetaData)):
-            let coordinator = TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: transaction, configuration: .tokenScriptTransaction(confirmType: .signThenSend, contract: contract, keystore: keystore, functionCallMetaData: functionCallMetaData), analyticsCoordinator: analyticsCoordinator)
+        do {
+            let data = try transactionFunction.makeUnConfirmedTransaction(withTokenObject: token, tokenId: tokenId, attributeAndValues: values, localRefs: localRefs, server: server, session: session)
+            let coordinator = try TransactionConfirmationCoordinator(presentingViewController: navigationController, session: session, transaction: data.0, configuration: .tokenScriptTransaction(confirmType: .signThenSend, contract: contract, functionCallMetaData: data.1), analytics: analytics, domainResolutionService: domainResolutionService, keystore: keystore, assetDefinitionStore: assetDefinitionStore, tokensService: tokensService)
             coordinator.delegate = self
             addCoordinator(coordinator)
             coordinator.start(fromSource: .tokenScript)
-        case .failure:
-            //TODO throw an error
-            break
+        } catch {
+            UIApplication.shared
+                .presentedViewController(or: navigationController)
+                .displayError(message: error.prettyError)
         }
     }
 
@@ -198,13 +175,8 @@ extension TokenScriptCoordinator: TransactionConfirmationCoordinatorDelegate {
 extension TokenScriptCoordinator: TransactionInProgressCoordinatorDelegate {
     func didDismiss(in coordinator: TransactionInProgressCoordinator) {
         removeCoordinator(coordinator)
-        
-        switch transactionConfirmationResult {
-        case .some(let result):
-            let _ = lastViewControllerInNavigationStack.flatMap { navigationController.popToViewController($0, animated: true) }
-            delegate?.didFinish(result, in: self)
-        case .none:
-            break
-        }
+
+        guard case .some(let result) = transactionConfirmationResult else { return }
+        delegate?.didFinish(result, in: self)
     }
 }

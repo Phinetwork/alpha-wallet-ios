@@ -235,15 +235,15 @@ extension ActivitiesViewModel {
 
 extension ActivitiesViewModel.functional {
 
-    static func extractTokenAndActivityName(fromTransactionRow transactionRow: TransactionRow, tokensDataStore: TokensDataStore, wallet: AlphaWallet.Address) -> (token: TokenObject, activityName: String)? {
+    static func extractTokenAndActivityName(fromTransactionRow transactionRow: TransactionRow, service: TokenProvidable, wallet: AlphaWallet.Address) -> (token: Token, activityName: String)? {
         enum TokenOperation {
-            case nativeCryptoTransfer(TokenObject)
-            case completedTransfer(TokenObject)
-            case pendingTransfer(TokenObject)
-            case completedErc20Approval(TokenObject)
-            case pendingErc20Approval(TokenObject)
+            case nativeCryptoTransfer(Token)
+            case completedTransfer(Token)
+            case pendingTransfer(Token)
+            case completedErc20Approval(Token)
+            case pendingErc20Approval(Token)
 
-            var token: TokenObject {
+            var token: Token {
                 switch self {
                 case .nativeCryptoTransfer(let token):
                     return token
@@ -266,13 +266,13 @@ extension ActivitiesViewModel.functional {
             //Explicitly listing out combinations so future changes to enums will be caught by compiler
             switch (transactionRow.state, transactionRow.operation?.operationType) {
             case (.pending, .nativeCurrencyTokenTransfer), (.pending, .erc20TokenTransfer), (.pending, .erc721TokenTransfer), (.pending, .erc875TokenTransfer), (.pending, .erc1155TokenTransfer):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensDataStore.token(forContract: $0, server: transactionRow.server) }.flatMap { TokenOperation.pendingTransfer($0) }
+                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { service.token(for: $0, server: transactionRow.server) }.flatMap { TokenOperation.pendingTransfer($0) }
             case (.completed, .nativeCurrencyTokenTransfer), (.completed, .erc20TokenTransfer), (.completed, .erc721TokenTransfer), (.completed, .erc875TokenTransfer), (.completed, .erc1155TokenTransfer):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensDataStore.token(forContract: $0, server: transactionRow.server) }.flatMap { TokenOperation.completedTransfer($0) }
+                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { service.token(for: $0, server: transactionRow.server) }.flatMap { TokenOperation.completedTransfer($0) }
             case (.pending, .erc20TokenApprove):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensDataStore.token(forContract: $0, server: transactionRow.server) }.flatMap { TokenOperation.pendingErc20Approval($0) }
+                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { service.token(for: $0, server: transactionRow.server) }.flatMap { TokenOperation.pendingErc20Approval($0) }
             case (.completed, .erc20TokenApprove):
-                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { tokensDataStore.token(forContract: $0, server: transactionRow.server) }.flatMap { TokenOperation.completedErc20Approval($0) }
+                erc20TokenOperation = transactionRow.operation?.contractAddress.flatMap { service.token(for: $0, server: transactionRow.server) }.flatMap { TokenOperation.completedErc20Approval($0) }
             case (.unknown, _), (.error, _), (.failed, _), (_, .unknown), (.completed, .none), (.pending, nil):
                 erc20TokenOperation = .none
             }
@@ -292,8 +292,8 @@ extension ActivitiesViewModel.functional {
         return (token: token, activityName: activityName)
     }
 
-    static func createPseudoActivity(fromTransactionRow transactionRow: TransactionRow, tokensDataStore: TokensDataStore, wallet: AlphaWallet.Address) -> Activity? {
-        guard let (token, activityName) = extractTokenAndActivityName(fromTransactionRow: transactionRow, tokensDataStore: tokensDataStore, wallet: wallet) else { return nil }
+    static func createPseudoActivity(fromTransactionRow transactionRow: TransactionRow, service: TokenProvidable, wallet: AlphaWallet.Address) -> Activity? {
+        guard let (token, activityName) = extractTokenAndActivityName(fromTransactionRow: transactionRow, service: service, wallet: wallet) else { return nil }
 
         var cardAttributes = [AttributeId: AssetInternalValue]()
         cardAttributes.setSymbol(string: transactionRow.server.symbol)
@@ -346,7 +346,7 @@ extension ActivitiesViewModel.functional {
                 //We only use this ID for refreshing the display of specific activity, since the display for ETH send/receives don't ever need to be refreshed, just need a number that don't clash with other activities
                 id: transactionRow.blockNumber + 10000000,
                 rowType: rowType,
-                tokenObject: Activity.AssignedToken(tokenObject: token),
+                token: token,
                 server: transactionRow.server,
                 name: activityName,
                 eventName: activityName,

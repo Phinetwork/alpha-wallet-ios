@@ -44,6 +44,9 @@ public struct Constants {
     public static let palmTestnetMagicLinkHost = "palmTestnet.aw.app"
     public static let klaytnCypressMagicLinkHost = "klaytnCypress.aw.app"
     public static let klaytnBaobabTestnetMagicLinkHost = "klaytnBaobabTestnet.aw.app"
+    public static let phiMagicLinkHost = "phi.aw.app"
+    public static let ioTeXMagicLinkHost = "ioTeX.aw.app"
+    public static let ioTeXTestnetMagicLinkHost = "ioTeXTestnet.aw.app"
 
     public enum Currency {
         static let usd = "USD"
@@ -218,13 +221,20 @@ public struct Constants {
     }
 
     enum WalletConnect {
-        static let relayURL = URL(string: "https://relay.walletconnect.com")!
         static let server = "AlphaWallet"
         static let websiteUrl = URL(string: Constants.website)!
         static let icons = [
             "https://gblobscdn.gitbook.com/spaces%2F-LJJeCjcLrr53DcT1Ml7%2Favatar.png?alt=media"
         ]
         static let connectionTimeout: TimeInterval = 10
+    }
+
+    enum Ens {
+        static let recordExpiration: TimeInterval = -(2 * 24 * 60 * 60)
+    }
+
+    enum Image {
+        static let numberOfCharactersOfSymbolToShowInIcon = 4
     }
 
     //CurrencyFormatter
@@ -240,12 +250,14 @@ public struct Constants {
         .byField(field: .value, direction: .descending)
     ]
 
-    static let fetchContractDataTimeout = TimeInterval(4)
-
-    static let refreshTokensThresholdSec: Int = 1
-
     static let googleServiceInfoPlistContent: String? = {
         R.file.googleServiceInfoPlist()?.path
     }()
 
+    enum AmountTextField {
+        static let allowedCharacters: String = {
+            let decimalSeparator = Config.locale.decimalSeparator ?? ""
+            return "0123456789" + decimalSeparator + EtherNumberFormatter.decimalPoint
+        }()
+    }
 }

@@ -66,7 +66,7 @@ class NewTokenViewController: UIViewController {
             updateSaveButtonBasedOnTokenTypeDetected()
         }
     }
-    private let addressTextField = AddressTextField()
+    lazy private var addressTextField = AddressTextField(domainResolutionService: domainResolutionService)
     private let symbolTextField = TextField()
     private let decimalsTextField = TextField()
     private let balanceTextField = TextField()
@@ -75,6 +75,7 @@ class NewTokenViewController: UIViewController {
     private let changeServerButton = UIButton()
     private var scrollViewBottomAnchorConstraint: NSLayoutConstraint!
     private var shouldFireDetectionWhenAppear: Bool
+    private let domainResolutionService: DomainResolutionServiceType
 
     var server: RPCServerOrAuto
     weak var delegate: NewTokenViewControllerDelegate?
@@ -88,8 +89,9 @@ class NewTokenViewController: UIViewController {
         .spacer(height: 4),
     ]
 
-    init(server: RPCServerOrAuto, initialState: NewTokenInitialState) {
+    init(server: RPCServerOrAuto, domainResolutionService: DomainResolutionServiceType, initialState: NewTokenInitialState) {
         self.server = server
+        self.domainResolutionService = domainResolutionService
         switch initialState {
         case .address:
             shouldFireDetectionWhenAppear = true
@@ -100,7 +102,7 @@ class NewTokenViewController: UIViewController {
 
         hidesBottomBarWhenPushed = true
 
-        changeServerButton.setTitleColor(Colors.navigationButtonTintColor, for: .normal)
+        changeServerButton.setTitleColor(Configuration.Color.Semantic.navigationbarButtonItemTint, for: .normal)
         changeServerButton.addTarget(self, action: #selector(changeServerAction), for: .touchUpInside)
         navigationItem.rightBarButtonItem = .init(customView: changeServerButton)
 
@@ -192,14 +194,6 @@ class NewTokenViewController: UIViewController {
             shouldFireDetectionWhenAppear = false
             addressTextField.errorState = .none
             updateContractValue(value: addressTextField.value.trimmed)
-        }
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-
-        if isMovingFromParent || isBeingDismissed {
-            delegate?.didClose(viewController: self)
         }
     }
 
@@ -365,7 +359,7 @@ class NewTokenViewController: UIViewController {
             symbol: symbol,
             decimals: decimals,
             type: tokenType,
-            balance: balance
+            balance: .erc875(balance)
         )
 
         delegate?.didAddToken(token: ercToken, in: self)
@@ -430,6 +424,12 @@ class NewTokenViewController: UIViewController {
         changeServerButton.setTitle(title, for: .normal)
         //Needs to re-create navigationItem.rightBarButtonItem to update button width for new title's length
         navigationItem.rightBarButtonItem = .init(customView: changeServerButton)
+    }
+}
+
+extension NewTokenViewController: PopNotifiable {
+    func didPopViewController(animated: Bool) {
+        delegate?.didClose(viewController: self)
     }
 }
 

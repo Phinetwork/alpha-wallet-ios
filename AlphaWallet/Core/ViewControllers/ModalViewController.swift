@@ -89,6 +89,7 @@ private class _ModalViewController: UIViewController {
 
     private lazy var scrollableContainerView: ScrollableStackView = {
         let view = ScrollableStackView()
+        UIKitFactory.decorateAsDefaultView(view)
         return view
     }()
 
@@ -110,7 +111,7 @@ private class _ModalViewController: UIViewController {
     private lazy var containerView: UIView = {
         let view = UIView()
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.backgroundColor = .white
+        UIKitFactory.decorateAsDefaultView(view)
         view.cornerRadius = 12
 
         let subview = [
@@ -366,14 +367,3 @@ private class _ModalViewController: UIViewController {
         return nil
     }
 }
-
-extension UIApplication {
-    var keyboardHostView: UIView? {
-        windows
-        .filter { NSStringFromClass($0.classForCoder) == "UIRemoteKeyboardWindow" }
-        .first?.subviews.filter { NSStringFromClass($0.classForCoder) == "UIInputSetContainerView" }
-        .first?.subviews.filter { NSStringFromClass($0.classForCoder) == "UIInputSetHostView" }
-        .first
-    }
-}
-

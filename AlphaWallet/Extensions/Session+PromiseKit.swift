@@ -7,51 +7,67 @@ import PromiseKit
 
 extension Session {
 
-    private class func sendImpl<Request: APIKit.Request>(_ request: Request, callbackQueue: CallbackQueue? = nil) -> Promise<Request.Response> {
+    private class func sendImpl<Request: APIKit.Request>(_ request: Request, server: RPCServer, analytics: AnalyticsLogger, callbackQueue: CallbackQueue? = nil) -> Promise<Request.Response> {
         let (promise, seal) = Promise<Request.Response>.pending()
         Session.send(request, callbackQueue: callbackQueue) { result in
             switch result {
             case .success(let result):
                 seal.fulfill(result)
             case .failure(let error):
-                if let e = convertToUserFriendlyError(error: error, baseUrl: request.baseURL) {
+                if let e = convertToUserFriendlyError(error: error, server: server, baseUrl: request.baseURL) {
+                    if let e = e as? RpcNodeRetryableRequestError {
+                        logRpcNodeError(e, analytics: analytics)
+                    }
+
                     seal.reject(e)
                 } else {
                     seal.reject(error)
                 }
             }
         }
-        
+
         return promise
     }
 
-    class func send<Request: APIKit.Request>(_ request: Request, callbackQueue: CallbackQueue? = nil) -> Promise<Request.Response> {
-        let promise = sendImpl(request, callbackQueue: callbackQueue)
+    private static func logRpcNodeError(_ rpcNodeError: RpcNodeRetryableRequestError, analytics: AnalyticsLogger) {
+        switch rpcNodeError {
+        case .rateLimited(let server, let domainName):
+            analytics.log(error: Analytics.WebApiErrors.rpcNodeRateLimited, properties: [Analytics.Properties.chain.rawValue: server.chainID, Analytics.Properties.domainName.rawValue: domainName])
+        case .invalidApiKey(let server, let domainName):
+            analytics.log(error: Analytics.WebApiErrors.rpcNodeInvalidApiKey, properties: [Analytics.Properties.chain.rawValue: server.chainID, Analytics.Properties.domainName.rawValue: domainName])
+        case .possibleBinanceTestnetTimeout, .networkConnectionWasLost, .invalidCertificate, .requestTimedOut:
+            return
+        }
+    }
+
+    class func send<Request: APIKit.Request>(_ request: Request, server: RPCServer, analytics: AnalyticsLogger, callbackQueue: CallbackQueue? = nil) -> Promise<Request.Response> {
+        let promise = sendImpl(request, server: server, analytics: analytics, callbackQueue: callbackQueue)
         return firstly {
             promise
         }.recover { error -> Promise<Request.Response> in
-            if error is SendTransactionRetryableError {
-                return sendImpl(request, callbackQueue: callbackQueue)
+            if error is RpcNodeRetryableRequestError {
+                return sendImpl(request, server: server, analytics: analytics, callbackQueue: callbackQueue)
             } else {
                 return promise
             }
         }
     }
 
-    static func convertToUserFriendlyError(error: SessionTaskError, baseUrl: URL) -> Error? {
+    //TODO we should make sure we only call this RPC nodes because the errors we map to mentions "RPC"
+    static func convertToUserFriendlyError(error: SessionTaskError, server: RPCServer, baseUrl: URL) -> Error? {
         infoLog("convertToUserFriendlyError URL: \(baseUrl.absoluteString) error: \(error)")
         switch error {
         case .connectionError(let e):
             let message = e.localizedDescription
             if message.hasPrefix("The network connection was lost") {
                 RemoteLogger.instance.logRpcOrOtherWebError("Connection Error | \(e.localizedDescription) | as: NetworkConnectionWasLostError()", url: baseUrl.absoluteString)
-                return SendTransactionRetryableError.networkConnectionWasLost
+                return RpcNodeRetryableRequestError.networkConnectionWasLost
             } else if message.hasPrefix("The certificate for this server is invalid") {
                 RemoteLogger.instance.logRpcOrOtherWebError("Connection Error | \(e.localizedDescription) | as: InvalidCertificateError()", url: baseUrl.absoluteString)
-                return SendTransactionRetryableError.invalidCertificate
+                return RpcNodeRetryableRequestError.invalidCertificate
             } else if message.hasPrefix("The request timed out") {
                 RemoteLogger.instance.logRpcOrOtherWebError("Connection Error | \(e.localizedDescription) | as: RequestTimedOutError()", url: baseUrl.absoluteString)
-                return SendTransactionRetryableError.requestTimedOut
+                return RpcNodeRetryableRequestError.requestTimedOut
             }
             RemoteLogger.instance.logRpcOrOtherWebError("Connection Error | \(e.localizedDescription)", url: baseUrl.absoluteString)
             return nil
@@ -106,9 +122,12 @@ extension Session {
                 case .nonHTTPURLResponse:
                     RemoteLogger.instance.logRpcOrOtherWebError("APIKit.ResponseError.nonHTTPURLResponse", url: baseUrl.absoluteString)
                 case .unacceptableStatusCode(let statusCode):
-                    if statusCode == 429 {
+                    if statusCode == 401 {
+                        warnLog("[API] Invalid API key with baseURL: \(baseUrl.absoluteString)")
+                        return RpcNodeRetryableRequestError.invalidApiKey(server: server, domainName: baseUrl.host ?? "")
+                    } else if statusCode == 429 {
                         warnLog("[API] Rate limited by baseURL: \(baseUrl.absoluteString)")
-                        return SendTransactionRetryableError.rateLimited
+                        return RpcNodeRetryableRequestError.rateLimited(server: server, domainName: baseUrl.host ?? "")
                     } else {
                         RemoteLogger.instance.logRpcOrOtherWebError("APIKit.ResponseError.unacceptableStatusCode | status: \(statusCode)", url: baseUrl.absoluteString)
                     }
@@ -121,7 +140,7 @@ extension Session {
             if RPCServer.binance_smart_chain_testnet.rpcURL.absoluteString == baseUrl.absoluteString, e.localizedDescription == "The data couldn’t be read because it isn’t in the correct format." {
                 RemoteLogger.instance.logRpcOrOtherWebError("\(e.localizedDescription) -> PossibleBinanceTestnetTimeoutError()", url: baseUrl.absoluteString)
                 //This is potentially Binance testnet timing out
-                return SendTransactionRetryableError.possibleBinanceTestnetTimeout
+                return RpcNodeRetryableRequestError.possibleBinanceTestnetTimeout
             }
 
             RemoteLogger.instance.logRpcOrOtherWebError("Other Error: \(e) | \(e.localizedDescription)", url: baseUrl.absoluteString)

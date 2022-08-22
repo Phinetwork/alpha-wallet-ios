@@ -61,7 +61,7 @@ open class EtherKeystore: NSObject, Keystore {
     private let defaultKeychainAccessUserPresenceRequired: KeychainSwiftAccessOptions = .accessibleWhenUnlockedThisDeviceOnly(userPresenceRequired: true)
     private let defaultKeychainAccessUserPresenceNotRequired: KeychainSwiftAccessOptions = .accessibleWhenUnlockedThisDeviceOnly(userPresenceRequired: false)
     private var walletAddressesStore: WalletAddressesStore
-    private var analyticsCoordinator: AnalyticsCoordinator
+    private var analytics: AnalyticsLogger
 
     private var isSimulator: Bool {
         TARGET_OS_SIMULATOR != 0
@@ -110,13 +110,13 @@ open class EtherKeystore: NSObject, Keystore {
         }
     }
 
-    init(keychain: KeychainSwift = KeychainSwift(keyPrefix: Constants.keychainKeyPrefix), walletAddressesStore: WalletAddressesStore = EtherKeystore.migratedWalletAddressesStore(userDefaults: .standardOrForTests), analyticsCoordinator: AnalyticsCoordinator) throws {
+    init(keychain: KeychainSwift = KeychainSwift(keyPrefix: Constants.keychainKeyPrefix), walletAddressesStore: WalletAddressesStore, analytics: AnalyticsLogger) throws {
         if !UIApplication.shared.isProtectedDataAvailable {
             throw EtherKeystoreError.protectionDisabled
         }
         self.keychain = keychain
         self.keychain.synchronizable = false
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
         self.walletAddressesStore = walletAddressesStore
         super.init()
 
@@ -125,14 +125,21 @@ open class EtherKeystore: NSObject, Keystore {
         }
     }
 
-    func createAccount(completion: @escaping (Result<AlphaWallet.Address, KeystoreError>) -> Void) {
+    func createAccount(completion: @escaping (Result<Wallet, KeystoreError>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let strongSelf = self else {
-                return
-            }
-            let result = strongSelf.createAccount()
-            OperationQueue.main.addOperation {
-                completion(result)
+            guard let strongSelf = self else { return }
+
+            let mnemonicString = strongSelf.generateMnemonic()
+            let mnemonic = mnemonicString.split(separator: " ").map { String($0) }
+
+            DispatchQueue.main.async {
+                let result = strongSelf.importWallet(type: .mnemonic(words: mnemonic, password: strongSelf.emptyPassphrase))
+                switch result {
+                case .success(let wallet):
+                    completion(.success(wallet))
+                case .failure:
+                    completion(.failure(.failedToCreateWallet))
+                }
             }
         }
     }
@@ -142,7 +149,7 @@ open class EtherKeystore: NSObject, Keystore {
         switch results {
         case .success(let wallet):
             //TODO not the best way to do this but let's see if there's a better way to inform the coordinator that a wallet has been imported to avoid it being prompted for back
-            PromptBackupCoordinator(keystore: self, wallet: wallet, config: .init(), analyticsCoordinator: analyticsCoordinator).markWalletAsImported()
+            PromptBackupCoordinator(keystore: self, wallet: wallet, config: .init(), analytics: analytics).markWalletAsImported()
         case .failure:
             break
         }
@@ -167,7 +174,7 @@ open class EtherKeystore: NSObject, Keystore {
                 return .failure(error)
             }
         case .privateKey(let privateKey):
-            let address = AlphaWallet.Address(fromPrivateKey: privateKey)
+            guard let address = AlphaWallet.Address(fromPrivateKey: privateKey) else { return .failure(.failedToImportPrivateKey) }
             guard !isAddressAlreadyInWalletsList(address: address) else {
                 return .failure(.duplicateAccount)
             }
@@ -180,14 +187,14 @@ open class EtherKeystore: NSObject, Keystore {
                 guard isSuccessful else { return .failure(.failedToCreateWallet) }
             }
             walletAddressesStore.addToListOfEthereumAddressesWithPrivateKeys(address)
-            return .success(Wallet(type: .real(address)))
+            return .success(Wallet(address: address, origin: .privateKey))
         case .mnemonic(let mnemonic, _):
             let mnemonicString = mnemonic.joined(separator: " ")
             let mnemonicIsGood = doesSeedMatchWalletAddress(mnemonic: mnemonicString)
             guard mnemonicIsGood else { return .failure(.failedToCreateWallet) }
             guard let wallet = HDWallet(mnemonic: mnemonicString, passphrase: emptyPassphrase) else { return .failure(.failedToCreateWallet) }
             let privateKey = derivePrivateKeyOfAccount0(fromHdWallet: wallet)
-            let address = AlphaWallet.Address(fromPrivateKey: privateKey)
+            guard let address = AlphaWallet.Address(fromPrivateKey: privateKey) else { return .failure(.failedToCreateWallet) }
             guard !isAddressAlreadyInWalletsList(address: address) else {
                 return .failure(.duplicateAccount)
             }
@@ -201,14 +208,14 @@ open class EtherKeystore: NSObject, Keystore {
                 guard isSuccessful else { return .failure(.failedToCreateWallet) }
             }
             walletAddressesStore.addToListOfEthereumAddressesWithSeed(address)
-            return .success(Wallet(type: .real(address)))
+            return .success(Wallet(address: address, origin: .hd))
         case .watch(let address):
             guard !isAddressAlreadyInWalletsList(address: address) else {
                 return .failure(.duplicateAccount)
             }
             walletAddressesStore.addToListOfWatchEthereumAddresses(address)
 
-            return .success(Wallet(type: .watch(address)))
+            return .success(Wallet(address: address, origin: .watch))
         }
     }
 
@@ -226,7 +233,7 @@ open class EtherKeystore: NSObject, Keystore {
         } while true
     }
 
-    func createAccount() -> Result<AlphaWallet.Address, KeystoreError> {
+    func createAccount() -> Result<Wallet, KeystoreError> {
         let mnemonicString = generateMnemonic()
         let mnemonic = mnemonicString.split(separator: " ").map {
             String($0)
@@ -234,7 +241,7 @@ open class EtherKeystore: NSObject, Keystore {
         let result = importWallet(type: .mnemonic(words: mnemonic, password: emptyPassphrase))
         switch result {
         case .success(let wallet):
-            return .success(wallet.address)
+            return .success(wallet)
         case .failure:
             return .failure(.failedToCreateWallet)
         }
@@ -249,7 +256,7 @@ open class EtherKeystore: NSObject, Keystore {
 
         guard walletWhenImported.mnemonic == mnemonic else { return false }
         let privateKey = derivePrivateKeyOfAccount0(fromHdWallet: walletWhenImported)
-        let address = AlphaWallet.Address(fromPrivateKey: privateKey)
+        guard let address = AlphaWallet.Address(fromPrivateKey: privateKey) else { return false }
         let testData = "any data will do here"
         let hash = testData.data(using: .utf8)!.sha3(.keccak256)
         //Do not use EthereumSigner.vitaliklizeConstant because the ECRecover implementation doesn't include it

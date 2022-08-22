@@ -11,13 +11,14 @@ protocol TransferTokenBatchCardsViaWalletAddressViewControllerDelegate: class, C
     func didEnterWalletAddress(tokenHolders: [TokenHolder], to recipient: AlphaWallet.Address, in viewController: TransferTokenBatchCardsViaWalletAddressViewController)
     func openQRCode(in controller: TransferTokenBatchCardsViaWalletAddressViewController)
     func didSelectTokenHolder(tokenHolder: TokenHolder, in viewController: TransferTokenBatchCardsViaWalletAddressViewController)
+    func didClose(in viewController: TransferTokenBatchCardsViaWalletAddressViewController)
 }
 
 //TODO: support ERC1155 fungibles (where decimals is provided and > 0)
 class TransferTokenBatchCardsViaWalletAddressViewController: UIViewController, TokenVerifiableStatusViewController {
-    private let token: TokenObject
+    private let token: Token
     private lazy var targetAddressTextField: AddressTextField = {
-        let textField = AddressTextField()
+        let textField = AddressTextField(domainResolutionService: domainResolutionService)
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.delegate = self
         textField.returnKeyType = .done
@@ -55,6 +56,7 @@ class TransferTokenBatchCardsViaWalletAddressViewController: UIViewController, T
     private let buttonsBar = HorizontalButtonsBar(configuration: .primary(buttons: 1))
     private var viewModel: TransferTokenBatchCardsViaWalletAddressViewControllerViewModel
     private let tokenCardViewFactory: TokenCardViewFactory
+    private let domainResolutionService: DomainResolutionServiceType
 
     var contract: AlphaWallet.Address {
         return token.contractAddress
@@ -72,10 +74,11 @@ class TransferTokenBatchCardsViaWalletAddressViewController: UIViewController, T
         return view
     }()
 
-    init(token: TokenObject, viewModel: TransferTokenBatchCardsViaWalletAddressViewControllerViewModel, tokenCardViewFactory: TokenCardViewFactory) {
+    init(token: Token, viewModel: TransferTokenBatchCardsViaWalletAddressViewControllerViewModel, tokenCardViewFactory: TokenCardViewFactory, domainResolutionService: DomainResolutionServiceType) {
         self.token = token
         self.viewModel = viewModel
         self.tokenCardViewFactory = tokenCardViewFactory
+        self.domainResolutionService = domainResolutionService
 
         super.init(nibName: nil, bundle: nil)
 
@@ -120,7 +123,7 @@ class TransferTokenBatchCardsViaWalletAddressViewController: UIViewController, T
         for (index, each) in viewModel.tokenHolders.enumerated() {
             subviews += [
                 generateViewFor(tokenHolder: each, index: index),
-                .separator()
+                UIView.spacer(backgroundColor: R.color.mike()!)
             ]
         }
 
@@ -146,12 +149,14 @@ class TransferTokenBatchCardsViaWalletAddressViewController: UIViewController, T
     }
 
     private func configure(subview: UIView & TokenCardRowViewConfigurable, tokenId: TokenId, tokenHolder: TokenHolder) {
-        subview.configure(tokenHolder: tokenHolder, tokenId: tokenId, tokenView: .viewIconified, assetDefinitionStore: assetDefinitionStore)
-        //NOTE: Update with more appropriatable way, type case isn't a good approach
         if let typeSubView = subview as? NonFungibleRowView {
-            typeSubView.configure(viewModel: NonFungibleRowViewModel2(tokenHolder: tokenHolder, tokenId: tokenId))
+            var viewModel = NonFungibleRowViewModel(tokenHolder: tokenHolder, tokenId: tokenId)
+            viewModel.titleColor = Colors.appText
+            viewModel.titleFont = Fonts.semibold(size: ScreenChecker().isNarrowScreen ? 13 : 17)
+
+            typeSubView.configure(viewModel: viewModel)
         } else {
-            //no-op
+            subview.configure(tokenHolder: tokenHolder, tokenId: tokenId)
         }
     }
 
@@ -187,6 +192,12 @@ class TransferTokenBatchCardsViaWalletAddressViewController: UIViewController, T
 
         amountHeaderView.isHidden = viewModel.isAmountSelectionHidden
         selectTokenCardAmountView.isHidden = viewModel.isAmountSelectionHidden
+    }
+}
+
+extension TransferTokenBatchCardsViaWalletAddressViewController: PopNotifiable {
+    func didPopViewController(animated: Bool) {
+        delegate?.didClose(in: self)
     }
 }
 

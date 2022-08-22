@@ -3,17 +3,15 @@
 import UIKit
 import StatefulViewController
 import PromiseKit
+import Combine
 
 protocol AddHideTokensViewControllerDelegate: AnyObject {
     func didPressAddToken(in viewController: UIViewController, with addressString: String)
-    func didMark(token: TokenObject, in viewController: UIViewController, isHidden: Bool)
-    func didChangeOrder(tokens: [TokenObject], in viewController: UIViewController)
-    func didClose(viewController: AddHideTokensViewController)
+    func didClose(in viewController: AddHideTokensViewController)
 }
 
 class AddHideTokensViewController: UIViewController {
-    private let assetDefinitionStore: AssetDefinitionStore
-    private var viewModel: AddHideTokensViewModel
+    private let viewModel: AddHideTokensViewModel
     private let searchController: UISearchController
     private var isSearchBarConfigured = false
     private lazy var tableView: UITableView = {
@@ -41,10 +39,14 @@ class AddHideTokensViewController: UIViewController {
     }()
     private var bottomConstraint: NSLayoutConstraint!
     private lazy var keyboardChecker = KeyboardChecker(self, resetHeightDefaultValue: 0, ignoreBottomSafeArea: true)
+    private var cancelable = Set<AnyCancellable>()
+    private let sortTokensParam = PassthroughSubject<SortTokensParam, Never>()
+    private let searchText = PassthroughSubject<String?, Never>()
+    private let isSearchActive = PassthroughSubject<Bool, Never>()
+
     weak var delegate: AddHideTokensViewControllerDelegate?
 
-    init(viewModel: AddHideTokensViewModel, assetDefinitionStore: AssetDefinitionStore) {
-        self.assetDefinitionStore = assetDefinitionStore
+    init(viewModel: AddHideTokensViewModel) {
         self.viewModel = viewModel
         searchController = UISearchController(searchResultsController: nil)
         super.init(nibName: nil, bundle: nil)
@@ -77,7 +79,7 @@ class AddHideTokensViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        configure(viewModel: viewModel)
+        bind(viewModel: viewModel)
         setupFilteringWithKeyword()
 
         navigationItem.largeTitleDisplayMode = .never
@@ -96,11 +98,6 @@ class AddHideTokensViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         keyboardChecker.viewWillDisappear()
-
-        if isMovingFromParent || isBeingDismissed {
-            delegate?.didClose(viewController: self)
-            return
-        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -111,12 +108,22 @@ class AddHideTokensViewController: UIViewController {
         delegate?.didPressAddToken(in: self, with: "")
     }
 
-    private func configure(viewModel: AddHideTokensViewModel) {
+    private func bind(viewModel: AddHideTokensViewModel) {
         title = viewModel.title
         tableView.backgroundColor = viewModel.backgroundColor
         view.backgroundColor = viewModel.backgroundColor
 
         tokenFilterView.configure(viewModel: .init(selectionItems: SortTokensParam.allCases, selected: viewModel.sortTokensParam))
+
+        let input = AddHideTokensViewModelInput(
+            sortTokensParam: sortTokensParam.eraseToAnyPublisher(),
+            searchText: searchText.eraseToAnyPublisher(),
+            isSearchActive: isSearchActive.eraseToAnyPublisher())
+
+        let output = viewModel.transform(input: input)
+        output.viewState.sink { [weak self] _ in
+            self?.reload()
+        }.store(in: &cancelable)
     }
 
     private func reload() {
@@ -124,18 +131,11 @@ class AddHideTokensViewController: UIViewController {
         tableView.reloadData()
         endLoading(animated: false)
     }
+}
 
-    func add(token: TokenObject) {
-        viewModel.add(token: token)
-        reload()
-    }
-
-    func set(popularTokens: [PopularToken]) {
-        viewModel.set(allPopularTokens: popularTokens)
-
-        DispatchQueue.main.async {
-            self.reload()
-        }
+extension AddHideTokensViewController: PopNotifiable {
+    func didPopViewController(animated: Bool) {
+        delegate?.didClose(in: self)
     }
 }
 
@@ -155,54 +155,35 @@ extension AddHideTokensViewController: UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        guard let token = viewModel.item(atIndexPath: indexPath) else { return UITableViewCell() }
-        let isVisible = viewModel.displayedToken(indexPath: indexPath)
-
-        switch token {
-        case .walletToken(let tokenObject):
+        switch viewModel.viewModel(for: indexPath) {
+        case .undefined:
+            return UITableViewCell()
+        case .walletToken(let viewModel):
             let cell: WalletTokenViewCell = tableView.dequeueReusableCell(for: indexPath)
-            cell.configure(viewModel: .init(token: tokenObject, assetDefinitionStore: assetDefinitionStore, isVisible: isVisible))
-
+            cell.configure(viewModel: viewModel)
             return cell
-        case .popularToken(let value):
+        case .popularToken(let viewModel):
             let cell: PopularTokenViewCell = tableView.dequeueReusableCell(for: indexPath)
-            cell.configure(viewModel: .init(token: value, isVisible: isVisible))
+            cell.configure(viewModel: viewModel)
 
             return cell
         }
-    }
-
-    func tableView(_ tableView: UITableView, moveRowAt sourceIndexPath: IndexPath, to destinationIndexPath: IndexPath) {
-        if let tokens = viewModel.moveItem(from: sourceIndexPath, to: destinationIndexPath) {
-            delegate?.didChangeOrder(tokens: tokens, in: self)
-        }
-        reload()
-    }
-
-    func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
-        viewModel.canMoveItem(indexPath: indexPath)
     }
 
     func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
-        let result: AddHideTokensViewModel.ShowHideOperationResult
-        let isTokenHidden: Bool
-
+        let result: AddHideTokensViewModel.ShowHideTokenResult
         switch editingStyle {
         case .insert:
-            result = viewModel.addDisplayed(indexPath: indexPath)
-            isTokenHidden = false
+            result = viewModel.markTokenAsDisplayed(at: indexPath)
         case .delete:
-            result = viewModel.deleteToken(indexPath: indexPath)
-            isTokenHidden = true
+            result = viewModel.markTokenAsHidden(at: indexPath)
         case .none:
             result = .value(nil)
-            isTokenHidden = false
         }
 
         switch result {
         case .value(let result):
-            if let result = result, let delegate = delegate {
-                delegate.didMark(token: result.token, in: self, isHidden: isTokenHidden)
+            if let result = result {
                 tableView.performBatchUpdates({
                     tableView.insertRows(at: [result.indexPathToInsert], with: .automatic)
                     tableView.deleteRows(at: [indexPath], with: .automatic)
@@ -212,12 +193,8 @@ extension AddHideTokensViewController: UITableViewDataSource {
             }
         case .promise(let promise):
             self.displayLoading()
-            promise.done(on: .none, flags: .barrier) { [weak self] result in
-                guard let strongSelf = self else { return }
-
-                if let result = result, let delegate = strongSelf.delegate {
-                    delegate.didMark(token: result.token, in: strongSelf, isHidden: isTokenHidden)
-                }
+            promise.done(on: .none, flags: .barrier) { _ in
+                //no-op
             }.catch { _ in
                 self.displayError(message: R.string.localizable.walletsHideTokenErrorAddTokenFailure())
             }.finally {
@@ -230,14 +207,10 @@ extension AddHideTokensViewController: UITableViewDataSource {
 
     func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
         let title = R.string.localizable.walletsHideTokenTitle()
-        let hideAction = UIContextualAction(style: .destructive, title: title) { [weak self] _, _, completionHandler in
-            guard let strongSelf = self else { return }
-
-            switch strongSelf.viewModel.deleteToken(indexPath: indexPath) {
+        let hideAction = UIContextualAction(style: .destructive, title: title) { [viewModel] _, _, completionHandler in
+            switch viewModel.markTokenAsHidden(at: indexPath) {
             case .value(let result):
-                if let result = result, let delegate = strongSelf.delegate {
-                    delegate.didMark(token: result.token, in: strongSelf, isHidden: true)
-
+                if let result = result {
                     tableView.performBatchUpdates({
                         tableView.deleteRows(at: [indexPath], with: .automatic)
                         tableView.insertRows(at: [result.indexPathToInsert], with: .automatic)
@@ -274,17 +247,6 @@ extension AddHideTokensViewController: UITableViewDelegate {
         false
     }
 
-    func tableView(_ tableView: UITableView, targetIndexPathForMoveFromRowAt sourceIndexPath: IndexPath, toProposedIndexPath proposedDestinationIndexPath: IndexPath) -> IndexPath {
-        if sourceIndexPath.section != proposedDestinationIndexPath.section {
-            var row = 0
-            if sourceIndexPath.section < proposedDestinationIndexPath.section {
-                row = self.tableView(tableView, numberOfRowsInSection: sourceIndexPath.section) - 1
-            }
-            return IndexPath(row: row, section: sourceIndexPath.section)
-        }
-        return proposedDestinationIndexPath
-    }
-
     func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
         switch viewModel.sections[section] {
         case .sortingFilters:
@@ -315,27 +277,24 @@ extension AddHideTokensViewController: DropDownViewDelegate {
     func filterDropDownViewDidChange(selection: ControlSelection) {
         guard let filterParam = tokenFilterView.value(from: selection) else { return }
 
-        viewModel.sortTokensParam = filterParam
-        reload()
+        sortTokensParam.send(filterParam)
     }
 }
 
 extension AddHideTokensViewController: UISearchControllerDelegate {
     func willPresentSearchController(_ searchController: UISearchController) {
-        viewModel.isSearchActive = true
+        isSearchActive.send(true)
     }
 
     func willDismissSearchController(_ searchController: UISearchController) {
-        viewModel.isSearchActive = false
+        isSearchActive.send(false)
     }
 }
 
 extension AddHideTokensViewController: UISearchResultsUpdating {
     func updateSearchResults(for searchController: UISearchController) {
-        DispatchQueue.main.async { [weak self] in
-            guard let strongSelf = self else { return }
-            strongSelf.viewModel.searchText = searchController.searchBar.text ?? ""
-            strongSelf.reload()
+        DispatchQueue.main.async { [searchText] in
+            searchText.send(searchController.searchBar.text ?? "")
         }
     }
 }

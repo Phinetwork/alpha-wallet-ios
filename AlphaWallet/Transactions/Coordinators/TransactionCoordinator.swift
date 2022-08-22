@@ -9,28 +9,28 @@ protocol TransactionCoordinatorDelegate: class, CanOpenURL {
 }
 
 class TransactionCoordinator: NSObject, Coordinator {
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private let sessions: ServerDictionary<WalletSession>
-
+    private var cancelable = Set<AnyCancellable>()
+    private var transactionsService: TransactionsService
+    private let service: TokenViewModelState
     lazy var rootViewController: TransactionsViewController = {
         return makeTransactionsController()
     }()
-
-    private var transactionsService: TransactionsService
 
     weak var delegate: TransactionCoordinatorDelegate?
     let navigationController: UINavigationController
     var coordinators: [Coordinator] = []
 
-    private var cancelable = Set<AnyCancellable>()
-    
     init(
-        analyticsCoordinator: AnalyticsCoordinator,
+        analytics: AnalyticsLogger,
         sessions: ServerDictionary<WalletSession>,
         navigationController: UINavigationController = .withOverridenBarAppearence(),
-        transactionsService: TransactionsService
+        transactionsService: TransactionsService,
+        service: TokenViewModelState
     ) {
-        self.analyticsCoordinator = analyticsCoordinator
+        self.service = service
+        self.analytics = analytics
         self.sessions = sessions
         self.navigationController = navigationController
         self.transactionsService = transactionsService
@@ -42,7 +42,7 @@ class TransactionCoordinator: NSObject, Coordinator {
         guard !Features.default.isAvailable(.isActivityEnabled) else { return }
 
         transactionsService
-            .transactionsChangesetPublisher
+            .transactionsChangeset
             .map { TransactionsViewModel.mapTransactions(transactions: $0) }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] transactions in
@@ -67,7 +67,7 @@ class TransactionCoordinator: NSObject, Coordinator {
     }
 
     private func showTransaction(_ transactionRow: TransactionRow, on navigationController: UINavigationController) {
-        let controller = TransactionViewController(analyticsCoordinator: analyticsCoordinator, session: sessions[transactionRow.server], transactionRow: transactionRow, delegate: self)
+        let controller = TransactionViewController(analytics: analytics, session: sessions[transactionRow.server], transactionRow: transactionRow, service: service, delegate: self)
         controller.hidesBottomBarWhenPushed = true
         controller.navigationItem.largeTitleDisplayMode = .never
 

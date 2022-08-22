@@ -2,6 +2,7 @@
 
 import Foundation
 import UIKit
+import Combine
 
 protocol AccountsCoordinatorDelegate: AnyObject {
     func didCancel(in coordinator: AccountsCoordinator)
@@ -44,26 +45,24 @@ struct AccountsCoordinatorViewModel {
 }
 
 class AccountsCoordinator: Coordinator {
-
     private let config: Config
     private let keystore: Keystore
-    private let analyticsCoordinator: AnalyticsCoordinator
+    private let analytics: AnalyticsLogger
     private let walletBalanceService: WalletBalanceService
+    private let blockiesGenerator: BlockiesGenerator
+    private let domainResolutionService: DomainResolutionServiceType
+    private let viewModel: AccountsCoordinatorViewModel
+    private var cancelable = Set<AnyCancellable>()
+
     let navigationController: UINavigationController
     var coordinators: [Coordinator] = []
 
     lazy var accountsViewController: AccountsViewController = {
-        let viewModel = AccountsViewModel(keystore: keystore, config: config, configuration: self.viewModel.configuration, analyticsCoordinator: analyticsCoordinator, walletBalanceService: walletBalanceService)
+        let viewModel = AccountsViewModel(keystore: keystore, config: config, configuration: self.viewModel.configuration, analytics: analytics, walletBalanceService: walletBalanceService, blockiesGenerator: blockiesGenerator, domainResolutionService: domainResolutionService)
         viewModel.allowsAccountDeletion = self.viewModel.configuration.allowsAccountDeletion
 
         let controller = AccountsViewController(viewModel: viewModel)
-        switch self.viewModel.configuration.hidesBackButton {
-        case true:
-            controller.navigationItem.hidesBackButton = true
-        case false:
-            controller.navigationItem.leftBarButtonItem = UIBarButtonItem.backBarButton(self, selector: #selector(dismiss))
-        }
-
+        controller.navigationItem.hidesBackButton = self.viewModel.configuration.hidesBackButton
         controller.navigationItem.rightBarButtonItem = UIBarButtonItem.addButton(self, selector: #selector(addWallet))
         controller.delegate = self
         controller.hidesBottomBarWhenPushed = true
@@ -72,31 +71,30 @@ class AccountsCoordinator: Coordinator {
     }()
 
     weak var delegate: AccountsCoordinatorDelegate?
-    private let viewModel: AccountsCoordinatorViewModel
 
     init(
         config: Config,
         navigationController: UINavigationController,
         keystore: Keystore,
-        analyticsCoordinator: AnalyticsCoordinator,
+        analytics: AnalyticsLogger,
         viewModel: AccountsCoordinatorViewModel,
-        walletBalanceService: WalletBalanceService
+        walletBalanceService: WalletBalanceService,
+        blockiesGenerator: BlockiesGenerator,
+        domainResolutionService: DomainResolutionServiceType
     ) {
         self.config = config
         self.navigationController = navigationController
         self.keystore = keystore
-        self.analyticsCoordinator = analyticsCoordinator
+        self.analytics = analytics
         self.viewModel = viewModel
         self.walletBalanceService = walletBalanceService
+        self.blockiesGenerator = blockiesGenerator
+        self.domainResolutionService = domainResolutionService
     }
 
     func start() {
         accountsViewController.navigationItem.largeTitleDisplayMode = .never
         navigationController.pushViewController(accountsViewController, animated: viewModel.animatedPresentation)
-    }
-
-    @objc private func dismiss() {
-        delegate?.didCancel(in: self)
     }
 
     @objc private func addWallet() {
@@ -129,7 +127,7 @@ class AccountsCoordinator: Coordinator {
 	}
 
     private func importOrCreateWallet(entryPoint: WalletEntryPoint) {
-        let coordinator = WalletCoordinator(config: config, keystore: keystore, analyticsCoordinator: analyticsCoordinator)
+        let coordinator = WalletCoordinator(config: config, keystore: keystore, analytics: analytics, domainResolutionService: domainResolutionService)
         if case .createInstantWallet = entryPoint {
             coordinator.navigationController = navigationController
         }
@@ -147,19 +145,15 @@ class AccountsCoordinator: Coordinator {
         controller.popoverPresentationController?.sourceView = sender
 
         switch account.type {
-        case .real(let account):
+        case .real(let address):
             let actionTitle: String
-            if keystore.isHdWallet(account: account) {
+            if account.origin == .hd {
                 actionTitle = R.string.localizable.walletsBackupHdWalletAlertSheetTitle()
             } else {
                 actionTitle = R.string.localizable.walletsBackupKeystoreWalletAlertSheetTitle()
             }
             let backupKeystoreAction = UIAlertAction(title: actionTitle, style: .default) { [weak self] _ in
-                guard let strongSelf = self else { return }
-                let coordinator = BackupCoordinator(navigationController: strongSelf.navigationController, keystore: strongSelf.keystore, account: account, analyticsCoordinator: strongSelf.analyticsCoordinator)
-                coordinator.delegate = strongSelf
-                coordinator.start()
-                strongSelf.addCoordinator(coordinator)
+                self?.startBackup(for: account)
             }
             controller.addAction(backupKeystoreAction)
 
@@ -172,7 +166,7 @@ class AccountsCoordinator: Coordinator {
             }
 
             let copyAction = UIAlertAction(title: R.string.localizable.copyAddress(), style: .default) { _ in
-                UIPasteboard.general.string = account.eip55String
+                UIPasteboard.general.string = address.eip55String
             }
             controller.addAction(copyAction)
 
@@ -183,12 +177,13 @@ class AccountsCoordinator: Coordinator {
             navigationController.present(controller, animated: true)
         case .watch:
             let renameAction = UIAlertAction(title: R.string.localizable.walletsNameRename(), style: .default) { [weak self] _ in
-                self?.promptRenameWallet(account.address)
+                self?.promptRenameWallet(account)
             }
             controller.addAction(renameAction)
 
-            let copyAction = UIAlertAction(title: R.string.localizable.copyAddress(), style: .default) { _ in
+            let copyAction = UIAlertAction(title: R.string.localizable.copyAddress(), style: .default) { [navigationController] _ in
                 UIPasteboard.general.string = account.address.eip55String
+                navigationController.view.showCopiedToClipboard(title: R.string.localizable.copiedToClipboard())
             }
             controller.addAction(copyAction)
             let cancelAction = UIAlertAction(title: R.string.localizable.cancel(), style: .cancel) { _ in }
@@ -198,7 +193,14 @@ class AccountsCoordinator: Coordinator {
         }
     }
 
-    private func promptRenameWallet(_ account: AlphaWallet.Address) {
+    private func startBackup(for account: Wallet) {
+        let coordinator = BackupCoordinator(navigationController: navigationController, keystore: keystore, account: account, analytics: analytics)
+        coordinator.delegate = self
+        coordinator.start()
+        addCoordinator(coordinator)
+    }
+
+    private func promptRenameWallet(_ account: Wallet) {
         let alertController = UIAlertController(
                 title: R.string.localizable.walletsNameRenameTo(),
                 message: nil,
@@ -207,25 +209,21 @@ class AccountsCoordinator: Coordinator {
 
         alertController.addAction(UIAlertAction(title: R.string.localizable.oK(), style: .default, handler: { [weak self] _ -> Void in
             guard let strongSelf = self else { return }
-            let textField = alertController.textFields![0] as UITextField
-            let name = textField.text?.trimmed ?? ""
-            if name.isEmpty {
-                strongSelf.config.deleteWalletName(forAccount: account)
-            } else {
-                strongSelf.config.saveWalletName(name, forAddress: account)
-            }
-            strongSelf.accountsViewController.configure()
+            guard let textField = alertController.textFields?.first else { return }
+            strongSelf.accountsViewController.viewModel.set(name: textField.text?.trimmed ?? "", for: account)
         }))
 
         alertController.addAction(UIAlertAction(title: R.string.localizable.cancel(), style: .cancel))
-        alertController.addTextField(configurationHandler: { [weak self] (textField: UITextField!) -> Void in
+        alertController.addTextField(configurationHandler: { [weak self] textField in
             guard let strongSelf = self else { return }
-            let resolver: DomainResolutionServiceType = DomainResolutionService()
-            resolver.resolveEns(address: account).done { resolution in
-                textField.placeholder = resolution.resolution.value
-            }.cauterize()
-            let walletNames = strongSelf.config.walletNames
-            textField.text = walletNames[account]
+
+            strongSelf.accountsViewController.viewModel.resolvedEns(for: account)
+                .assign(to: \.placeholder, on: textField)
+                .store(in: &strongSelf.cancelable)
+
+            strongSelf.accountsViewController.viewModel.assignedName(for: account)
+                .assign(to: \.text, on: textField)
+                .store(in: &strongSelf.cancelable)
         })
 
         navigationController.present(alertController, animated: true)
@@ -245,6 +243,10 @@ class AccountsCoordinator: Coordinator {
 }
 
 extension AccountsCoordinator: AccountsViewControllerDelegate {
+    func didClose(in viewController: AccountsViewController) {
+        delegate?.didCancel(in: self)
+    }
+
     func didSelectAccount(account: Wallet, in viewController: AccountsViewController) {
         delegate?.didSelectAccount(account: account, in: self)
     }
@@ -265,8 +267,6 @@ extension AccountsCoordinator: WalletCoordinatorDelegate {
             removeCoordinator(coordinator)
             delegate.didSelectAccount(account: account, in: self)
         } else {
-            accountsViewController.configure()
-
             coordinator.navigationController.dismiss(animated: true)
             removeCoordinator(coordinator)
         }
@@ -291,7 +291,7 @@ extension AccountsCoordinator: BackupCoordinatorDelegate {
 
     func didFinish(account: AlphaWallet.Address, in coordinator: BackupCoordinator) {
         delegate?.didFinishBackup(account: account, in: self)
-        
+
         removeCoordinator(coordinator)
     }
 }
